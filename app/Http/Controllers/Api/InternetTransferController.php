@@ -50,14 +50,22 @@ class InternetTransferController extends Controller
             ],
             'monthly_internet' => [
                 'alfa' => [
-                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
-                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
-                    5    => ['deduct'=>5,    'add'=>5.617],
+                    1   => ['deduct'=>3.5,  'add'=>4],
+                    7   => ['deduct'=>9,    'add'=>10],
+                    22  => ['deduct'=>14.5, 'add'=>16],
+                    44  => ['deduct'=>21,   'add'=>24],
+                    77  => ['deduct'=>41,   'add'=>35],
+                    111 => ['deduct'=>40,   'add'=>45],
+                    444 => ['deduct'=>129,  'add'=>135],
                 ],
                 'mtc' => [
-                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
-                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
-                    5    => ['deduct'=>5,    'add'=>5.617],
+                    1   => ['deduct'=>3.5,  'add'=>4],
+                    7   => ['deduct'=>9,    'add'=>10],
+                    22  => ['deduct'=>14.5, 'add'=>16],
+                    44  => ['deduct'=>21,   'add'=>24],
+                    77  => ['deduct'=>41,   'add'=>35],
+                    111 => ['deduct'=>40,   'add'=>45],
+                    444 => ['deduct'=>129,  'add'=>135],
                 ],
             ],
             'weekly' => [
