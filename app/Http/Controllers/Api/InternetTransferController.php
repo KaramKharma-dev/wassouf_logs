@@ -62,12 +62,12 @@ class InternetTransferController extends Controller
             ],
             'weekly' => [
                 'alfa' => [
-                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    0.5  => ['deduct'=>1.67, 'add'=>1.91],
                     1.5  => ['deduct'=>2.34, 'add'=>2.64],
                     5    => ['deduct'=>5,    'add'=>5.617],
                 ],
                 'mtc' => [
-                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    0.5  => ['deduct'=>1.67, 'add'=>1.91],
                     1.5  => ['deduct'=>2.34, 'add'=>2.64],
                     5    => ['deduct'=>5,    'add'=>5.617],
                 ],
