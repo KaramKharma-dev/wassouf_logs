@@ -17,7 +17,7 @@ class InternetTransferController extends Controller
             'receiver_number' => ['required','string','max:20'],
             'quantity_gb'     => ['required','numeric','min:0.001'],
             'provider'        => ['required', Rule::in(['alfa','mtc'])],
-            'type'            => ['required','string','max:50'], // daily/weekly/monthly
+            'type'            => ['required','string','max:50'], // weekly/monthly/monthly_internet
         ]);
 
         $senderNumber = $data['provider'] === 'mtc' ? '81764824' : '81222749';
@@ -26,31 +26,55 @@ class InternetTransferController extends Controller
         $type = $data['type'];
         $provider = $data['provider'];
 
-        // جدول الأسعار داخلي
+        // جدول الأسعار
         $pricing = [
-            'daily' => [
+            'monthly' => [
                 'alfa' => [
-                    1     => ['deduct'=>3.5, 'add'=>4],
-                    7     => ['deduct'=>9,   'add'=>10],
-                    22    => ['deduct'=>14.5,'add'=>16],
-                    44    => ['deduct'=>21,  'add'=>24],
-                    77    => ['deduct'=>41,  'add'=>35],
-                    111   => ['deduct'=>40,  'add'=>45],
-                    444   => ['deduct'=>129, 'add'=>135],
+                    1   => ['deduct'=>3.5,  'add'=>4],
+                    7   => ['deduct'=>9,    'add'=>10],
+                    22  => ['deduct'=>14.5, 'add'=>16],
+                    44  => ['deduct'=>21,   'add'=>24],
+                    77  => ['deduct'=>41,   'add'=>35],
+                    111 => ['deduct'=>40,   'add'=>45],
+                    444 => ['deduct'=>129,  'add'=>135],
                 ],
-                'mtc' => [ /* نفس قيم Alfa لو تريد */ ],
+                'mtc' => [
+                    1   => ['deduct'=>3.5,  'add'=>4],
+                    7   => ['deduct'=>9,    'add'=>10],
+                    22  => ['deduct'=>14.5, 'add'=>16],
+                    44  => ['deduct'=>21,   'add'=>24],
+                    77  => ['deduct'=>41,   'add'=>35],
+                    111 => ['deduct'=>40,   'add'=>45],
+                    444 => ['deduct'=>129,  'add'=>135],
+                ],
+            ],
+            'monthly_internet' => [
+                'alfa' => [
+                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
+                    5    => ['deduct'=>5,    'add'=>5.617],
+                ],
+                'mtc' => [
+                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
+                    5    => ['deduct'=>5,    'add'=>5.617],
+                ],
             ],
             'weekly' => [
                 'alfa' => [
-                    0.5   => ['deduct'=>1.67, 'add'=>2.247],
-                    1.5   => ['deduct'=>2.34, 'add'=>2.64],
-                    5     => ['deduct'=>5,    'add'=>5.617],
+                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
+                    5    => ['deduct'=>5,    'add'=>5.617],
                 ],
-                'mtc' => [ /* نفس قيم Alfa لو تريد */ ],
+                'mtc' => [
+                    0.5  => ['deduct'=>1.67, 'add'=>2.247],
+                    1.5  => ['deduct'=>2.34, 'add'=>2.64],
+                    5    => ['deduct'=>5,    'add'=>5.617],
+                ],
             ],
         ];
 
-        // تحقق من وجود السعر
+        // التحقق من وجود السعر
         if (!isset($pricing[$type][$provider][$quantity])) {
             return response()->json([
                 'ok' => false,
@@ -74,7 +98,6 @@ class InternetTransferController extends Controller
         return DB::transaction(function () use ($payload, $deduct) {
             $row = InternetTransfer::create($payload);
 
-            // تحديث الرصيد
             Balance::adjust($payload['provider'], -$deduct);
             Balance::adjust('my_balance', $payload['price']);
 
