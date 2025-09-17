@@ -4,6 +4,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\UsdTransferController;
 use App\Http\Controllers\Api\UsdSmsHookController;
+use App\Http\Controllers\Api\InternetTransferController;
+
+Route::post('/internet-transfers', [InternetTransferController::class, 'store']);
 
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);
 
