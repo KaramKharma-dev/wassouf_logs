@@ -109,97 +109,93 @@ class InternetTransferController extends Controller
     public function smsCallback(Request $request)
     {
         $data = $request->validate([
-            'provider'     => ['required', Rule::in(['alfa','mtc'])],
-            'raw_sms'      => ['required','string','max:2000'],
-            'sms_sender'   => ['nullable','string','max:100'],
-            'tx_id'        => ['nullable','integer'],
-            'msisdn'       => ['nullable','string','max:20'],
-            'quantity_gb'  => ['nullable','numeric','min:0.001'],
+            'provider'   => ['required', Rule::in(['alfa','mtc'])],
+            'raw_sms'    => ['required','string','max:2000'],
+            'sms_sender' => ['nullable','string','max:100'],
         ]);
 
         $provider = $data['provider'];
         $rawSms   = $data['raw_sms'];
         $smsHash  = sha1($provider.'|'.$rawSms);
 
-        $pricing = [
-            'monthly' => [
-                'alfa' => [
-                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                    '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
-                ],
-                'mtc' => [
-                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                    '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
-                ],
-            ],
-            'monthly_internet' => [
-                'alfa' => [
-                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                    '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
-                ],
-                'mtc' => [
-                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                    '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
-                ],
-            ],
-            'weekly' => [
-                'alfa' => [
-                    '0.5'=>['deduct'=>1.67,'add'=>1.91],
-                    '1.5'=>['deduct'=>2.34,'add'=>2.64],
-                    '5'  =>['deduct'=>5,'add'=>5.617],
-                ],
-                'mtc' => [
-                    '0.5'=>['deduct'=>1.67,'add'=>1.91],
-                    '1.5'=>['deduct'=>2.34,'add'=>2.64],
-                    '5'  =>['deduct'=>5,'add'=>5.617],
-                ],
-            ],
-        ];
+        // 1) امنع التكرار على مستوى نص الرسالة
+        return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
 
-        $msisdn = isset($data['msisdn']) ? $this->normalizeMsisdn($data['msisdn']) : $this->extractMsisdnFromSms($rawSms);
-        $qty    = isset($data['quantity_gb']) ? (float)$data['quantity_gb'] : $this->extractQtyGbFromSms($rawSms);
-
-        return DB::transaction(function () use ($provider, $rawSms, $smsHash, $msisdn, $qty, $pricing, $data) {
             if (InternetTransfer::where('sms_hash', $smsHash)->lockForUpdate()->exists()) {
                 return response()->json(['ok'=>true,'msg'=>'duplicate sms ignored'], 200);
             }
 
-            $q = InternetTransfer::where('status','PENDING')
+            // 2) استخرج الرقم والكمية من نص الرسالة فقط
+            $msisdn = $this->extractMsisdnFromSms($rawSms);          // مثال يلتقط 8111465 أو 03231922
+            $qty    = $this->extractQtyGbFromSms($rawSms);           // مثال يلتقط 22 من "22GB"
+
+            if (!$msisdn) {
+                return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_sms'], 422);
+            }
+            if ($qty === null) {
+                return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
+            }
+
+            // 3) ابحث سجل PENDING يطابق "تمامًا" الرقم والكمية لنفس المزوّد
+            $candidate = InternetTransfer::where('status','PENDING')
                 ->where('provider',$provider)
+                ->where('receiver_number', $msisdn)
+                ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001]) // تطابق كميات float
                 ->orderByDesc('id')
-                ->lockForUpdate();
-
-            if (!empty($data['tx_id'])) {
-                $q->where('id', $data['tx_id']);
-            }
-            if ($msisdn) {
-                $q->where('receiver_number', $msisdn);
-            }
-            $candidate = $q->first();
-
-            if (!$candidate && $qty !== null) {
-                $candidate = InternetTransfer::where('status','PENDING')
-                    ->where('provider',$provider)
-                    ->when($msisdn, fn($qq)=>$qq->where('receiver_number',$msisdn))
-                    ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001])
-                    ->orderByDesc('id')
-                    ->lockForUpdate()
-                    ->first();
-            }
+                ->lockForUpdate()
+                ->first();
 
             if (!$candidate) {
                 return response()->json([
-                    'ok'=>false,'error'=>'no_pending_match','hint'=>'send tx_id or parsed msisdn/qty'
+                    'ok'=>false,
+                    'error'=>'no_pending_match_exact',
+                    'hint'=>'receiver_number and quantity_gb must both match a PENDING row'
                 ], 404);
             }
+
+            // 4) احسب الخصم والسعر من نوع العملية والمزوّد والكمية
+            $pricing = [
+                'monthly' => [
+                    'alfa' => [
+                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                        '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                        '444'=>['deduct'=>129,'add'=>135],
+                    ],
+                    'mtc' => [
+                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                        '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                        '444'=>['deduct'=>129,'add'=>135],
+                    ],
+                ],
+                'monthly_internet' => [
+                    'alfa' => [
+                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                        '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                        '444'=>['deduct'=>129,'add'=>135],
+                    ],
+                    'mtc' => [
+                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                        '77'=>['deduct'=>41,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                        '444'=>['deduct'=>129,'add'=>135],
+                    ],
+                ],
+                'weekly' => [
+                    'alfa' => [
+                        '0.5'=>['deduct'=>1.67,'add'=>1.91],
+                        '1.5'=>['deduct'=>2.34,'add'=>2.64],
+                        '5'  =>['deduct'=>5,'add'=>5.617],
+                    ],
+                    'mtc' => [
+                        '0.5'=>['deduct'=>1.67,'add'=>1.91],
+                        '1.5'=>['deduct'=>2.34,'add'=>2.64],
+                        '5'  =>['deduct'=>5,'add'=>5.617],
+                    ],
+                ],
+            ];
 
             $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
             $type   = $candidate->type;
@@ -212,6 +208,7 @@ class InternetTransferController extends Controller
             $deduct = $pricing[$type][$prov][$qtyKey]['deduct'];
             $price  = $pricing[$type][$prov][$qtyKey]['add'];
 
+            // 5) قيود مالية + إقفال العملية
             Balance::adjust($prov, -$deduct);
             Balance::adjust('my_balance', $price);
 
@@ -244,18 +241,22 @@ class InternetTransferController extends Controller
 
     private function extractMsisdnFromSms(string $text): ?string
     {
-        if (preg_match('/(\d{8})\b/', $text, $m)) {
+        // أولوية للنمط "number <digits>"
+        if (preg_match('/number\s+(\d{7,8})\b/i', $text, $m)) {
+            return $this->normalizeMsisdn($m[1]);
+        }
+        // احتياط: أي 7–8 أرقام مستقلة
+        if (preg_match('/\b(\d{7,8})\b/', $text, $m)) {
             return $this->normalizeMsisdn($m[1]);
         }
         return null;
-    }
+        }
 
     private function extractQtyGbFromSms(string $text): ?float
     {
-        if (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)\b/i', $text, $m)) {
-            $n = (float)$m[1];
-            $u = strtoupper($m[2]);
-            return $u === 'MB' ? round($n/1024, 3) : round($n, 3);
+        // يلتقط فقط GB كما في الرسالة
+        if (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*GB\b/i', $text, $m)) {
+            return round((float)$m[1], 3);
         }
         return null;
     }
