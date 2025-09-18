@@ -61,11 +61,12 @@ class UsdSmsHookController extends Controller
         $price = round($apply * $UNIT_PRICE, 4);
 
         DB::transaction(function () use ($transfer, $apply, $fee, $price, $receiver, $data) {
-            // 1) حدّث التحويل
+            // 1) تحديث التحويل
             $transfer->increment('confirmed_amount_usd', $apply);
             $transfer->increment('confirmed_messages', 1);
+            $transfer->increment('fees', $fee); // هنا الزيادة التراكمية
 
-            // 2) سجّل إيصال الرسالة
+            // 2) إيصال الرسالة
             DB::table('usd_transfer_receipts')->insert([
                 'usd_transfer_id'  => $transfer->id,
                 'receiver_number'  => $receiver,
@@ -79,10 +80,11 @@ class UsdSmsHookController extends Controller
                 'updated_at'       => now(),
             ]);
 
-            // 3) الأرصدة: خصم مزوّد، إضافة لمحفظتي
+            // 3) الأرصدة
             Balance::adjust($data['provider'], -1 * ($apply + $fee));
             Balance::adjust('my_balance', $price);
         });
+
 
         return response()->json([
             'ok' => true,
