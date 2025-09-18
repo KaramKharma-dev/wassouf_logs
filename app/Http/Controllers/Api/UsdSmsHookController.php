@@ -11,6 +11,12 @@ use App\Models\Balance;
 
 class UsdSmsHookController extends Controller
 {
+    // تسعير ثابت
+    private const UNIT_PRICE = 1.1236;    // سعر الدولار الواحد
+    private const FEE_PER_MSG = 0.14;     // رسوم كل رسالة
+    private const SENDER_ALFA = '81222749';
+    private const SENDER_MTC  = '81764824';
+
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -18,55 +24,66 @@ class UsdSmsHookController extends Controller
             'body'     => ['required','string','min:10'],
         ]);
 
+        // 1) استخراج المبلغ والرقم من نص الرسالة
         [$chunkAmount, $receiverRaw] = $this->parse($data['provider'], $data['body']);
         if ($chunkAmount === null || $receiverRaw === null) {
             return response()->json(['ok'=>false,'error'=>'parse_failed'], 422);
         }
 
-        $UNIT_PRICE = 1.1236;
-        $FEE_PER_MESSAGE = 0.14;
-
+        // 2) تطبيع
         $receiver = $this->normalizeMsisdn($receiverRaw);
-        $chunk = (float) number_format((float)$chunkAmount, 1, '.', ''); // 3.0 أو 1.0...
-
-        // ابحث عن أقدم طلب مفتوح لنفس المستلم والمزوّد
-        $transfer = UsdTransfer::where('provider', $data['provider'])
-            ->where('receiver_number', $receiver)
-            ->whereColumn('confirmed_amount_usd', '<', 'amount_usd')
-            ->orderBy('created_at', 'asc')
-            ->lockForUpdate()
-            ->first();
-
-        // إن لم يوجد، ننشئ طلب يغطي الرسالة الواحدة
-        if (!$transfer) {
-            $transfer = UsdTransfer::create([
-                'sender_number'        => ($data['provider'] === 'mtc' ? '81764824' : '81222749'),
-                'receiver_number'      => $receiver,
-                'amount_usd'           => $chunk,
-                'confirmed_amount_usd' => 0,
-                'confirmed_messages'   => 0,
-                'fees'                 => 0,
-                'price'                => round($chunk * $UNIT_PRICE, 4),
-                'provider'             => $data['provider'],
-            ]);
+        $chunk = (float) number_format((float)$chunkAmount, 1, '.', ''); // 3.0 / 2.0 / 1.0
+        if (!in_array($chunk, [3.0, 2.0, 1.0], true)) {
+            return response()->json(['ok'=>false,'error'=>'unsupported_chunk'], 422);
         }
+        $key = $chunk == 3.0 ? 'exp_msg_3' : ($chunk == 2.0 ? 'exp_msg_2' : 'exp_msg_1');
 
-        $remaining = max((float)$transfer->amount_usd - (float)$transfer->confirmed_amount_usd, 0.0);
-        $apply = min($chunk, $remaining);
-        if ($apply <= 0) {
-            return response()->json(['ok'=>false,'error'=>'no_remaining_amount_to_confirm'], 422);
-        }
+        // 3) تنفيذ ذري
+        $result = DB::transaction(function () use ($data, $receiver, $chunk, $key) {
+            // أ) ابحث عن تحويل مفتوح لنفس المستلم يتوقّع نفس قيمة الرسالة
+            /** @var UsdTransfer|null $transfer */
+            $transfer = UsdTransfer::where('provider', $data['provider'])
+                ->where('receiver_number', $receiver)
+                ->whereColumn('confirmed_amount_usd','<','amount_usd')
+                ->where($key,'>',0)
+                ->orderBy('created_at','asc')
+                ->lockForUpdate()
+                ->first();
 
-        $fee   = $FEE_PER_MESSAGE;
-        $price = round($apply * $UNIT_PRICE, 4);
+            // ب) إن لم يوجد تحويل يتوقع هذا الجزء، أنشئ تحويل جديد بالجزء ذاته
+            if (!$transfer) {
+                $transfer = UsdTransfer::create([
+                    'sender_number'        => $data['provider'] === 'mtc' ? self::SENDER_MTC : self::SENDER_ALFA,
+                    'receiver_number'      => $receiver,
+                    'amount_usd'           => $chunk,         // طلب بمقدار الرسالة نفسها
+                    'confirmed_amount_usd' => 0,
+                    'confirmed_messages'   => 0,
+                    'fees'                 => 0,
+                    'price'                => round($chunk * self::UNIT_PRICE, 4),
+                    'provider'             => $data['provider'],
+                    'exp_msg_3'            => $chunk == 3.0 ? 1 : 0,
+                    'exp_msg_2'            => $chunk == 2.0 ? 1 : 0,
+                    'exp_msg_1'            => $chunk == 1.0 ? 1 : 0,
+                ]);
+            }
 
-        DB::transaction(function () use ($transfer, $apply, $fee, $price, $receiver, $data) {
-            // 1) تحديث التحويل
+            // ج) احسب الجزء المطبق
+            $remaining = max((float)$transfer->amount_usd - (float)$transfer->confirmed_amount_usd, 0.0);
+            $apply = min($chunk, $remaining);
+            if ($apply <= 0) {
+                return ['error' => 'no_remaining_amount_to_confirm'];
+            }
+
+            $fee   = self::FEE_PER_MSG;
+            $price = round($apply * self::UNIT_PRICE, 4);
+
+            // د) حدّث التحويل
             $transfer->increment('confirmed_amount_usd', $apply);
             $transfer->increment('confirmed_messages', 1);
-            $transfer->increment('fees', $fee); // هنا الزيادة التراكمية
+            $transfer->increment('fees', $fee);
+            $transfer->decrement($key, 1);
 
-            // 2) إيصال الرسالة
+            // هـ) سجّل إيصال الرسالة
             DB::table('usd_transfer_receipts')->insert([
                 'usd_transfer_id'  => $transfer->id,
                 'receiver_number'  => $receiver,
@@ -80,19 +97,28 @@ class UsdSmsHookController extends Controller
                 'updated_at'       => now(),
             ]);
 
-            // 3) الأرصدة
+            // و) الأرصدة
             Balance::adjust($data['provider'], -1 * ($apply + $fee));
             Balance::adjust('my_balance', $price);
+
+            return [
+                'transfer_id'   => $transfer->id,
+                'confirmed_now' => $apply,
+            ];
         });
 
+        if (isset($result['error'])) {
+            return response()->json(['ok'=>false,'error'=>$result['error']], 422);
+        }
 
-        return response()->json([
-            'ok' => true,
-            'transfer_id' => $transfer->id,
-            'confirmed_now' => $apply
-        ], 201);
+        return response()->json(['ok'=>true] + $result, 201);
     }
 
+    /**
+     * استخراج chunk والرقم من نص الرسالة.
+     * Alfa: "USD 3.0 ... mobile number 961XXXXXXXX"
+     * MTC : "$3.0 ... mobile number 81764824"
+     */
     private function parse(string $provider, string $body): array
     {
         if ($provider === 'alfa') {
@@ -101,21 +127,31 @@ class UsdSmsHookController extends Controller
                 return [$m1[1], $m2[1]];
             }
         }
+
         if ($provider === 'mtc') {
             if (preg_match('/\$(\d+(?:\.\d+)?)\b/i', $body, $m1) &&
                 preg_match('/mobile\s+number\s+(\+?(?:961)?\d{8})/i', $body, $m2)) {
                 return [$m1[1], $m2[1]];
             }
         }
+
         return [null, null];
     }
 
+    /**
+     * تطبيع الرقم: إزالة +961/00961/961 والاحتفاظ بآخر 8 خانات.
+     */
     private function normalizeMsisdn(string $n): string
     {
         $n = preg_replace('/\D+/', '', $n);
-        if (str_starts_with($n, '00961')) $n = substr($n, 5);
-        elseif (str_starts_with($n, '961')) $n = substr($n, 3);
-        if (strlen($n) > 8) $n = substr($n, -8);
+        if (str_starts_with($n, '00961')) {
+            $n = substr($n, 5);
+        } elseif (str_starts_with($n, '961')) {
+            $n = substr($n, 3);
+        }
+        if (strlen($n) > 8) {
+            $n = substr($n, -8);
+        }
         return $n;
     }
 }

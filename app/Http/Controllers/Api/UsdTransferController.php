@@ -19,9 +19,27 @@ class UsdTransferController extends Controller
         ]);
 
         $UNIT_PRICE = 1.1236;
+
         $amount = (float) $data['amount_usd'];
         if ($amount <= 0) {
             return response()->json(['ok'=>false,'error'=>'amount_must_be_positive'], 422);
+        }
+
+        // نحسب بالخمس قروش لتجنب مشاكل الفاصلة
+        $amountCents = (int) round($amount * 100);   // مثال 10.00$ -> 1000 سنت
+
+        $exp3 = intdiv($amountCents, 300);           // كل 3.00$
+        $rem  = $amountCents - ($exp3 * 300);
+
+        $exp2 = 0; $exp1 = 0;
+        if ($rem === 200)      { $exp2 = 1; }
+        elseif ($rem === 100)  { $exp1 = 1; }
+        elseif ($rem !== 0) {
+            return response()->json([
+                'ok'=>false,
+                'error'=>'amount_not_decomposable_to_3_2_1',
+                'hint'=>'استخدم أعدادًا صحيحة بالدولار (مثال 5 أو 10).'
+            ], 422);
         }
 
         $senderNumber = $data['provider'] === 'mtc' ? '81764824' : '81222749';
@@ -34,15 +52,19 @@ class UsdTransferController extends Controller
             'amount_usd'            => $amount,
             'confirmed_amount_usd'  => 0,
             'confirmed_messages'    => 0,
-            'fees'                  => 0,      // ستتراكم على مستوى الإيصالات
-            'price'                 => $price, // السعر الإجمالي المتوقع
+            'fees'                  => 0,
+            'price'                 => $price,
             'provider'              => $data['provider'],
+            'exp_msg_3'             => $exp3,
+            'exp_msg_2'             => $exp2,
+            'exp_msg_1'             => $exp1,
         ];
 
         return DB::transaction(function () use ($payload) {
             $row = UsdTransfer::create($payload);
             return response()->json(['ok'=>true,'id'=>$row->id,'msg'=>'usd transfer created (pending)'], 201);
         });
+
     }
 
     private function normalizeMsisdn(string $n): string
