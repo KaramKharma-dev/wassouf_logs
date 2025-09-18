@@ -18,88 +18,102 @@ class UsdSmsHookController extends Controller
             'body'     => ['required','string','min:10'],
         ]);
 
-        $SENDER_NUMBER = $data['provider'] === 'mtc' ? '81764824' : '81222749';
-        $FEES = 0.14;
-
-        // جدول الأسعار بالضبط كما زوّدتني
-        $priceTable = [
-            3.0 => 3.37,
-            2.5 => 2.81,
-            2.0 => 2.247,
-            1.5 => 1.685,
-            1.0 => 1.123,
-            0.5 => 0.561,
-        ];
-
-        [$amount, $receiver] = $this->parse($data['provider'], $data['body']);
-        if ($amount === null || $receiver === null) {
+        [$chunkAmount, $receiverRaw] = $this->parse($data['provider'], $data['body']);
+        if ($chunkAmount === null || $receiverRaw === null) {
             return response()->json(['ok'=>false,'error'=>'parse_failed'], 422);
         }
 
-        // تطبيع خانة عشرية واحدة
-        $amount = (float) number_format((float)$amount, 1, '.', '');
-        if (!array_key_exists($amount, $priceTable)) {
-            return response()->json(['ok'=>false,'error'=>'amount_usd_not_allowed','allowed'=>array_keys($priceTable)], 422);
+        $UNIT_PRICE = 1.1236;
+        $FEE_PER_MESSAGE = 0.14;
+
+        $receiver = $this->normalizeMsisdn($receiverRaw);
+        $chunk = (float) number_format((float)$chunkAmount, 1, '.', ''); // 3.0 أو 1.0...
+
+        // ابحث عن أقدم طلب مفتوح لنفس المستلم والمزوّد
+        $transfer = UsdTransfer::where('provider', $data['provider'])
+            ->where('receiver_number', $receiver)
+            ->whereColumn('confirmed_amount_usd', '<', 'amount_usd')
+            ->orderBy('created_at', 'asc')
+            ->lockForUpdate()
+            ->first();
+
+        // إن لم يوجد، ننشئ طلب يغطي الرسالة الواحدة
+        if (!$transfer) {
+            $transfer = UsdTransfer::create([
+                'sender_number'        => ($data['provider'] === 'mtc' ? '81764824' : '81222749'),
+                'receiver_number'      => $receiver,
+                'amount_usd'           => $chunk,
+                'confirmed_amount_usd' => 0,
+                'confirmed_messages'   => 0,
+                'fees'                 => 0,
+                'price'                => round($chunk * $UNIT_PRICE, 4),
+                'provider'             => $data['provider'],
+            ]);
         }
-        $price = $priceTable[$amount];
-        $receiver = $this->normalizeMsisdn($receiver);
 
-        $payload = [
-            'sender_number'   => $SENDER_NUMBER,
-            'receiver_number' => $receiver,
-            'amount_usd'      => $amount,
-            'fees'            => $FEES,
-            'price'           => $price,
-            'provider'        => $data['provider'],
-        ];
+        $remaining = max((float)$transfer->amount_usd - (float)$transfer->confirmed_amount_usd, 0.0);
+        $apply = min($chunk, $remaining);
+        if ($apply <= 0) {
+            return response()->json(['ok'=>false,'error'=>'no_remaining_amount_to_confirm'], 422);
+        }
 
-        return DB::transaction(function () use ($payload) {
-            $row = UsdTransfer::create($payload);
-            Balance::adjust($payload['provider'], -1 * ($payload['amount_usd'] + $payload['fees']));
-            Balance::adjust('my_balance', $payload['price']);
-            return response()->json(['ok'=>true,'id'=>$row->id], 201);
+        $fee   = $FEE_PER_MESSAGE;
+        $price = round($apply * $UNIT_PRICE, 4);
+
+        DB::transaction(function () use ($transfer, $apply, $fee, $price, $receiver, $data) {
+            // 1) حدّث التحويل
+            $transfer->increment('confirmed_amount_usd', $apply);
+            $transfer->increment('confirmed_messages', 1);
+
+            // 2) سجّل إيصال الرسالة
+            DB::table('usd_transfer_receipts')->insert([
+                'usd_transfer_id'  => $transfer->id,
+                'receiver_number'  => $receiver,
+                'provider'         => $data['provider'],
+                'chunk_amount_usd' => $apply,
+                'fee_usd'          => $fee,
+                'price_usd'        => $price,
+                'raw_body'         => $data['body'],
+                'received_at'      => now(),
+                'created_at'       => now(),
+                'updated_at'       => now(),
+            ]);
+
+            // 3) الأرصدة: خصم مزوّد، إضافة لمحفظتي
+            Balance::adjust($data['provider'], -1 * ($apply + $fee));
+            Balance::adjust('my_balance', $price);
         });
+
+        return response()->json([
+            'ok' => true,
+            'transfer_id' => $transfer->id,
+            'confirmed_now' => $apply
+        ], 201);
     }
 
     private function parse(string $provider, string $body): array
     {
         if ($provider === 'alfa') {
             if (preg_match('/USD\s+(\d+(?:\.\d+)?)\b/i', $body, $m1) &&
-                preg_match('/mobile\s+number\s+(\+?(?:961)?\d{8})/i', $body, $m2)) {
+                preg_match('/mobile\s+number\s+(\+?961\d{8})/i', $body, $m2)) {
                 return [$m1[1], $m2[1]];
             }
         }
-
         if ($provider === 'mtc') {
-            // يقبل $3 أو $3.0 ويقبل رقم 8 خانات محلي أو مع 961/+961/00961
-            if (preg_match('/\$(\d+(?:\.\d+)?)/i', $body, $m1) &&
+            if (preg_match('/\$(\d+(?:\.\d+)?)\b/i', $body, $m1) &&
                 preg_match('/mobile\s+number\s+(\+?(?:961)?\d{8})/i', $body, $m2)) {
                 return [$m1[1], $m2[1]];
             }
         }
-
         return [null, null];
     }
 
-
     private function normalizeMsisdn(string $n): string
     {
-        // أرقام فقط
         $n = preg_replace('/\D+/', '', $n);
-
-        // إزالة بادئات لبنان إن وجدت: +961 / 00961 / 961
-        if (str_starts_with($n, '00961')) {
-            $n = substr($n, 5);
-        } elseif (str_starts_with($n, '961')) {
-            $n = substr($n, 3);
-        }
-
-        // في جميع الأحوال خزّن آخر 8 خانات إذا كانت أطول
-        if (strlen($n) > 8) {
-            $n = substr($n, -8);
-        }
-
-        return $n; // مثال: 96181222748 -> 81222748
+        if (str_starts_with($n, '00961')) $n = substr($n, 5);
+        elseif (str_starts_with($n, '961')) $n = substr($n, 3);
+        if (strlen($n) > 8) $n = substr($n, -8);
+        return $n;
     }
-
 }
