@@ -9,9 +9,11 @@ class UsdTransfer extends Model
     protected $table = 'usd_transfers';
 
     protected $fillable = [
-        'sender_number','receiver_number','amount_usd','confirmed_amount_usd',
-        'confirmed_messages','fees','price','provider'
-    ];
+    'sender_number','receiver_number','amount_usd','confirmed_amount_usd',
+    'confirmed_messages','fees','price','provider',
+    'exp_msg_3','exp_msg_2','exp_msg_1',
+];
+
 
     protected $casts = [
         'amount_usd' => 'decimal:2',
