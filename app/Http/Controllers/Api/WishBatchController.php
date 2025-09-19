@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Parser;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 class WishBatchController extends Controller
 {
@@ -228,8 +229,10 @@ class WishBatchController extends Controller
         for ($r = $headerRow + 1; $r <= $sheet->getHighestRow(); $r++) {
             $get = function($idx) use ($sheet, $r) {
                 if ($idx === null) return null;
-                return trim((string)$sheet->getCellByColumnAndRow($idx+1, $r)->getFormattedValue());
+                $col = Coordinate::stringFromColumnIndex($idx + 1); // A,B,C...
+                return trim((string)$sheet->getCell($col . $r)->getFormattedValue());
             };
+
 
             $dateStr = $get($map['date']);
             $ref     = $get($map['ref']);
