@@ -9,7 +9,6 @@ use App\Models\WishRowRaw;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Parser;
-use Illuminate\Support\Str;
 use Carbon\Carbon;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
@@ -60,26 +59,34 @@ class WishBatchController extends Controller
             $seq = 0; $valid = 0; $invalid = 0;
             foreach ($rows as $r) {
                 $seq++;
+
+                $rowStatus = (
+                    ($r['op_date'] ?? null) &&
+                    ($r['reference'] ?? null) &&
+                    ($r['balance_after'] ?? null) &&
+                    ($r['amount'] ?? null)
+                ) ? 'VALID' : 'INVALID';
+                $rowStatus === 'VALID' ? $valid++ : $invalid++;
+
                 $rowHash = hash('sha256', implode('|', [
                     optional($r['op_date'])->toDateString() ?? '',
                     $r['reference'] ?? '',
+                    $r['service'] ?? '',
                     $r['description'] ?? '',
                     $r['amount'] ?? '',
                     $r['balance_after'] ?? ''
                 ]));
 
-                $rowStatus = ($r['op_date'] && $r['reference'] && $r['balance_after'] && $r['amount']) ? 'VALID' : 'INVALID';
-                $rowStatus === 'VALID' ? $valid++ : $invalid++;
-
                 WishRowRaw::create([
                     'batch_id'      => $batch->id,
                     'seq_no'        => $seq,
-                    'op_date'       => $r['op_date'],
-                    'reference'     => $r['reference'],
-                    'description'   => $r['description'],
-                    'debit'         => ($r['direction'] ?? null) === 'debit'  ? $r['amount'] : null,
-                    'credit'        => ($r['direction'] ?? null) === 'credit' ? $r['amount'] : null,
-                    'balance_after' => $r['balance_after'],
+                    'op_date'       => $r['op_date'] ?? null,
+                    'reference'     => $r['reference'] ?? null,
+                    'service'       => $r['service'] ?? null,
+                    'description'   => $r['description'] ?? null,
+                    'debit'         => ($r['direction'] ?? null) === 'debit'  ? ($r['amount'] ?? null) : null,
+                    'credit'        => ($r['direction'] ?? null) === 'credit' ? ($r['amount'] ?? null) : null,
+                    'balance_after' => $r['balance_after'] ?? null,
                     'row_status'    => $rowStatus,
                     'row_hash'      => $rowHash,
                 ]);
@@ -107,7 +114,7 @@ class WishBatchController extends Controller
 
     /**
      * PDF: يُرجع [issuedOn(Carbon|null), rows(array), rawText(string)]
-     * كل row: ['op_date'=>Carbon,'reference'=>string,'description'=>string,'amount'=>float,'direction'=>'debit|credit','balance_after'=>float]
+     * كل row: ['op_date'=>Carbon,'reference'=>string,'service'=>string|null,'description'=>string,'amount'=>float,'direction'=>'debit|credit','balance_after'=>float]
      */
     private function parsePdf(string $bytes): array
     {
@@ -160,6 +167,7 @@ class WishBatchController extends Controller
             $rows[] = [
                 'op_date'       => Carbon::createFromFormat('d/m/Y', $dateStr),
                 'reference'     => $reference,
+                'service'       => $this->detectServiceFromDesc($desc),
                 'description'   => $desc,
                 'amount'        => $amount,
                 'direction'     => $direction,
@@ -207,19 +215,20 @@ class WishBatchController extends Controller
         }
         if (!$headerRow) {
             $headerRow = 1;
-            $headers = ['Date','Reference','Service Description','Debit','Credit','Balance'];
+            $headers = ['Date','Reference','Service','Service Description','Debit','Credit','Balance'];
         }
 
         // خريطة الأعمدة
-        $map = ['date'=>null,'ref'=>null,'desc'=>null,'debit'=>null,'credit'=>null,'bal'=>null];
+        $map = ['date'=>null,'ref'=>null,'service'=>null,'desc'=>null,'debit'=>null,'credit'=>null,'bal'=>null];
         foreach ($headers as $i => $h) {
             $hh = strtolower(preg_replace('/\s+/', ' ', trim($h)));
-            if (str_contains($hh,'date')) $map['date']=$i;
-            if (str_contains($hh,'reference')) $map['ref']=$i;
-            if (str_contains($hh,'service') || str_contains($hh,'description')) $map['desc']=$i;
-            if (str_contains($hh,'debit')) $map['debit']=$i;
-            if (str_contains($hh,'credit')) $map['credit']=$i;
-            if (str_contains($hh,'balance')) $map['bal']=$i;
+            if ($hh === 'date') $map['date']=$i;
+            if ($hh === 'reference') $map['ref']=$i;
+            if ($hh === 'service') $map['service']=$i;
+            if ($hh === 'service description' || $hh === 'description') $map['desc']=$i;
+            if ($hh === 'debit') $map['debit']=$i;
+            if ($hh === 'credit') $map['credit']=$i;
+            if ($hh === 'balance') $map['bal']=$i;
         }
 
         $rows = [];
@@ -233,18 +242,18 @@ class WishBatchController extends Controller
                 return trim((string)$sheet->getCell($col . $r)->getFormattedValue());
             };
 
-
             $dateStr = $get($map['date']);
-            $ref     = $get($map['ref']);
+            $refRaw  = $get($map['ref']);
+            $service = $get($map['service']);
             $desc    = $get($map['desc']);
             $debit   = $get($map['debit']);
             $credit  = $get($map['credit']);
             $bal     = $get($map['bal']);
 
-            if ($dateStr === '' && $ref === '' && $desc === '') continue;
-            if (stripos($desc, 'TOTAL AMOUNT') !== false || stripos($desc, 'OPENING BALANCE') !== false) continue;
+            if ($dateStr === '' && $refRaw === '' && $desc === '' && $service === '') continue;
+            if (stripos((string)$desc, 'TOTAL AMOUNT') !== false || stripos((string)$desc, 'OPENING BALANCE') !== false) continue;
 
-            $ref = $ref ? ('tr:' . preg_replace('/^\D*/','', $ref)) : null;
+            $ref = $refRaw ? ('tr:' . preg_replace('/^\D*/','', $refRaw)) : null;
             $amountStr = $debit !== '' ? $debit : ($credit !== '' ? $credit : null);
             $direction = $debit !== '' ? 'debit' : ($credit !== '' ? 'credit' : null);
 
@@ -270,6 +279,7 @@ class WishBatchController extends Controller
             $rows[] = [
                 'op_date'       => $opDate,
                 'reference'     => $ref,
+                'service'       => $service ?: $this->detectServiceFromDesc($desc),
                 'description'   => $desc,
                 'amount'        => $amount,
                 'direction'     => $direction,
@@ -337,6 +347,7 @@ class WishBatchController extends Controller
                 $rows[] = [
                     'op_date'       => Carbon::createFromFormat('d/m/Y', $dateStr),
                     'reference'     => $ref,
+                    'service'       => $this->detectServiceFromDesc($desc),
                     'description'   => $desc,
                     'amount'        => $amount,
                     'direction'     => $direction,
@@ -364,6 +375,23 @@ class WishBatchController extends Controller
             }
         }
         return $rows;
+    }
+
+    private function detectServiceFromDesc(?string $desc): ?string
+    {
+        if (!$desc) return null;
+        $d = strtoupper($desc);
+        if (str_starts_with($d, 'W2W')) return 'W2W';
+        if (str_starts_with($d, 'TOPUP QR COLLECT')) return 'TOPUP QR COLLECT';
+        if (str_starts_with($d, 'QR COLLECT')) {
+            if (str_contains($d, 'QR PAYMENT')) return 'QR COLLECT QR PAYMENT';
+            return 'QR COLLECT';
+        }
+        if (str_starts_with($d, 'PAY BY CARD')) return 'PAY BY CARD';
+        if (str_starts_with($d, 'CURRENCY EXCHANGE')) return 'CURRENCY EXCHANGE';
+        if (str_starts_with($d, 'ITUNES')) return 'ITUNES';
+        if (str_starts_with($d, 'RAZER')) return 'RAZER';
+        return null;
     }
 
     private function num(string $s): float
