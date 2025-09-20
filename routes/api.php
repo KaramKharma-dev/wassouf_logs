@@ -7,7 +7,7 @@ use App\Http\Controllers\Api\UsdSmsHookController;
 use App\Http\Controllers\Api\InternetTransferController;
 use App\Http\Controllers\Api\WishBatchController;
 
-use App\Http\Controllers\WishRowsProcessController;
+use App\Http\Controllers\Api\WishRowsProcessController;
 
 Route::get('/wish/process', [WishRowsProcessController::class, 'index'])->name('wish.process.index');
 Route::post('/wish/process', [WishRowsProcessController::class, 'run'])->name('wish.process.run');
