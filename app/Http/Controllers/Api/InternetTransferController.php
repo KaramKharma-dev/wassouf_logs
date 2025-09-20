@@ -107,149 +107,165 @@ class InternetTransferController extends Controller
     }
 
     public function smsCallback(Request $request)
-    {
-        $data = $request->validate([
-            'provider'   => ['required', Rule::in(['alfa','mtc'])],
-            'raw_sms'    => ['required','string','max:2000'],
-            'sms_sender' => ['nullable','string','max:100'],
-        ]);
+{
+    $data = $request->validate([
+        'provider'   => ['required', Rule::in(['alfa','mtc'])],
+        'raw_sms'    => ['required','string','max:2000'],
+        'sms_sender' => ['nullable','string','max:100'],
+    ]);
 
-        $provider = $data['provider'];
-        $rawSms   = $data['raw_sms'];
-        $smsHash  = sha1($provider.'|'.$rawSms);
+    $provider = $data['provider'];
+    $rawSms   = $data['raw_sms'];
+    $smsHash  = sha1($provider.'|'.$rawSms);
 
-        return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
+    return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
 
-            if (InternetTransfer::where('sms_hash', $smsHash)->lockForUpdate()->exists()) {
-                return response()->json(['ok'=>true,'msg'=>'duplicate sms ignored'], 200);
-            }
+        // 0) فحص بحسب الهاش مع قفل
+        $existingByHash = InternetTransfer::where('sms_hash', $smsHash)
+            ->lockForUpdate()
+            ->first();
 
-            $msisdn = $this->extractMsisdnFromSms($rawSms);
-            $qty    = $this->extractQtyGbFromSms($rawSms);
+        if ($existingByHash && $existingByHash->status === 'COMPLETED') {
+            // نفس الرسالة مُعالجة سابقاً
+            return response()->json(['ok'=>true,'msg'=>'duplicate sms ignored'], 200);
+        }
 
-            if (!$msisdn) {
-                return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_sms'], 422);
-            }
-            if ($qty === null) {
-                return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
-            }
+        // 1) استخراج الرقم والكمية
+        $msisdn = $this->extractMsisdnFromSms($rawSms);
+        $qty    = $this->extractQtyGbFromSms($rawSms);
 
-            $candidate = InternetTransfer::where('status','PENDING')
-                ->where('provider',$provider)
-                ->where('receiver_number', $msisdn)
-                ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001])
-                ->orderByDesc('id')
-                ->lockForUpdate()
-                ->first();
+        if (!$msisdn) {
+            return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_sms'], 422);
+        }
+        if ($qty === null) {
+            return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
+        }
 
-            $pricing = [
-                'monthly' => [
-                    'alfa' => [
-                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                        '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                        '444'=>['deduct'=>129,'add'=>135],
-                    ],
-                    'mtc' => [
-                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                        '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                        '444'=>['deduct'=>129,'add'=>135],
-                    ],
+        // 2) ابحث مرشّح PENDING يطابق الرقم والكمية والمزوّد
+        $candidate = InternetTransfer::where('status','PENDING')
+            ->where('provider',$provider)
+            ->where('receiver_number', $msisdn)
+            ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001])
+            ->orderByDesc('id')
+            ->lockForUpdate()
+            ->first();
+
+        // لو في صف بنفس الهاش لكنه PENDING استخدمه كمرشح
+        if (!$candidate && $existingByHash && $existingByHash->status === 'PENDING') {
+            $candidate = $existingByHash;
+        }
+
+        // جدول الأسعار
+        $pricing = [
+            'monthly' => [
+                'alfa' => [
+                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                    '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                    '444'=>['deduct'=>129,'add'=>135],
                 ],
-                'monthly_internet' => [
-                    'alfa' => [
-                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                        '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                        '444'=>['deduct'=>129,'add'=>135],
-                    ],
-                    'mtc' => [
-                        '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
-                        '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
-                        '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                        '444'=>['deduct'=>129,'add'=>135],
-                    ],
+                'mtc' => [
+                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                    '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                    '444'=>['deduct'=>129,'add'=>135],
                 ],
-                'weekly' => [
-                    'alfa' => [
-                        '0.5'=>['deduct'=>1.67,'add'=>1.91],
-                        '1.5'=>['deduct'=>2.34,'add'=>2.64],
-                        '5'  =>['deduct'=>5,'add'=>5.617],
-                    ],
-                    'mtc' => [
-                        '0.5'=>['deduct'=>1.67,'add'=>1.91],
-                        '1.5'=>['deduct'=>2.34,'add'=>2.64],
-                        '5'  =>['deduct'=>5,'add'=>5.617],
-                    ],
+            ],
+            'monthly_internet' => [
+                'alfa' => [
+                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                    '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                    '444'=>['deduct'=>129,'add'=>135],
                 ],
-            ];
+                'mtc' => [
+                    '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
+                    '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
+                    '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
+                    '444'=>['deduct'=>129,'add'=>135],
+                ],
+            ],
+            'weekly' => [
+                'alfa' => [
+                    '0.5'=>['deduct'=>1.67,'add'=>1.91],
+                    '1.5'=>['deduct'=>2.34,'add'=>2.64],
+                    '5'  =>['deduct'=>5,'add'=>5.617],
+                ],
+                'mtc' => [
+                    '0.5'=>['deduct'=>1.67,'add'=>1.91],
+                    '1.5'=>['deduct'=>2.34,'add'=>2.64],
+                    '5'  =>['deduct'=>5,'add'=>5.617],
+                ],
+            ],
+        ];
 
-            if ($candidate) {
-                $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
-                $type   = $candidate->type;
-                $prov   = $candidate->provider;
+        if ($candidate) {
+            // استخدم نوع العملية من المرشح نفسه
+            $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
+            $type   = $candidate->type;
+            $prov   = $candidate->provider;
 
-                if (!isset($pricing[$type][$prov][$qtyKey])) {
-                    return response()->json(['ok'=>false,'error'=>'pricing_not_found'], 422);
-                }
-
-                $deduct = $pricing[$type][$prov][$qtyKey]['deduct'];
-                $price  = $pricing[$type][$prov][$qtyKey]['add'];
-
-                Balance::adjust($prov, -$deduct);
-                Balance::adjust('my_balance', $price);
-
-                $candidate->status       = 'COMPLETED';
-                $candidate->confirmed_at = now();
-                $candidate->sms_hash     = $smsHash;
-                $candidate->sms_meta     = [
-                    'sender' => $data['sms_sender'] ?? null,
-                    'raw'    => $rawSms,
-                    'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
-                ];
-                $candidate->price        = $price;
-                $candidate->save();
-
-                return response()->json([
-                    'ok'=>true,'id'=>$candidate->id,'status'=>$candidate->status,
-                    'msg'=>'pending matched -> completed, balances updated'
-                ], 200);
+            if (!isset($pricing[$type][$prov][$qtyKey])) {
+                return response()->json(['ok'=>false,'error'=>'pricing_not_found'], 422);
             }
 
-            // لا يوجد PENDING مطابق -> إنشاء صف COMPLETED جديد واختيار المرسل
-            [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
-            if ($pickedType === null) {
-                return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
-            }
+            $deduct = $pricing[$type][$prov][$qtyKey]['deduct'];
+            $price  = $pricing[$type][$prov][$qtyKey]['add'];
 
-            Balance::adjust($provider, -$deduct);
+            Balance::adjust($prov, -$deduct);
             Balance::adjust('my_balance', $price);
 
-            $row = new InternetTransfer();
-            $row->sender_number   = $this->pickSenderNumber($provider, $data['sms_sender'] ?? null);
-            $row->receiver_number = $msisdn;
-            $row->quantity_gb     = $qty;
-            $row->price           = $price;
-            $row->provider        = $provider;
-            $row->type            = $pickedType;
-            $row->status          = 'COMPLETED';
-            $row->confirmed_at    = now();
-            $row->sms_hash        = $smsHash;
-            $row->sms_meta        = [
+            $candidate->status       = 'COMPLETED';
+            $candidate->confirmed_at = now();
+            $candidate->sms_hash     = $smsHash;
+            $candidate->sms_meta     = [
                 'sender' => $data['sms_sender'] ?? null,
                 'raw'    => $rawSms,
                 'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
-                'auto_completed' => true,
             ];
-            $row->save();
+            $candidate->price        = $price;
+            $candidate->save();
 
             return response()->json([
-                'ok'=>true,'id'=>$row->id,'status'=>$row->status,
-                'msg'=>'no pending -> created completed, balances updated'
-            ], 201);
-        });
-    }
+                'ok'=>true,'id'=>$candidate->id,'status'=>$candidate->status,
+                'msg'=>'pending matched -> completed, balances updated'
+            ], 200);
+        }
+
+        // لا يوجد PENDING مطابق -> أنشئ COMPLETED جديد
+        [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
+        if ($pickedType === null) {
+            return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
+        }
+
+        Balance::adjust($provider, -$deduct);
+        Balance::adjust('my_balance', $price);
+
+        $row = new InternetTransfer();
+        $row->sender_number   = $this->pickSenderNumber($provider, $data['sms_sender'] ?? null);
+        $row->receiver_number = $msisdn;
+        $row->quantity_gb     = $qty;
+        $row->price           = $price;
+        $row->provider        = $provider;
+        $row->type            = $pickedType;
+        $row->status          = 'COMPLETED';
+        $row->confirmed_at    = now();
+        $row->sms_hash        = $smsHash;
+        $row->sms_meta        = [
+            'sender' => $data['sms_sender'] ?? null,
+            'raw'    => $rawSms,
+            'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
+            'auto_completed' => true,
+        ];
+        $row->save();
+
+        return response()->json([
+            'ok'=>true,'id'=>$row->id,'status'=>$row->status,
+            'msg'=>'no pending -> created completed, balances updated'
+        ], 201);
+    });
+}
+
 
     private function resolvePriceAndType(array $pricing, string $provider, float $qty, string $rawSms): array
     {
