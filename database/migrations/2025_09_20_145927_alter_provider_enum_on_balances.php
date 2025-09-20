@@ -8,16 +8,24 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // توسعة تشمل القديمة والجديدة
+        DB::statement("
+            ALTER TABLE `balances`
+            MODIFY `provider` ENUM('alfa','mtc','wish','mb_wish_us','mb_wish_lb','pc_wish_us','pc_wish_lb','my_balance')
+            NOT NULL
+        ");
+
+        // تحويل wish إلى mb_wish_us
+        DB::table('balances')->where('provider', 'wish')->update(['provider' => 'mb_wish_us']);
+
+        // تقليص بإزالة wish
         DB::statement("
             ALTER TABLE `balances`
             MODIFY `provider` ENUM('alfa','mtc','mb_wish_us','mb_wish_lb','pc_wish_us','pc_wish_lb','my_balance')
             NOT NULL
         ");
 
-        DB::table('balances')
-            ->where('provider', 'wish')
-            ->update(['provider' => 'mb_wish_us']);
-
+        // إدخال المزودات الناقصة
         $now = now();
         foreach (['mb_wish_lb','pc_wish_us','pc_wish_lb'] as $p) {
             if (!DB::table('balances')->where('provider', $p)->exists()) {
@@ -34,6 +42,13 @@ return new class extends Migration
     public function down(): void
     {
         $now = now();
+
+        // إضافة wish مؤقتاً
+        DB::statement("
+            ALTER TABLE `balances`
+            MODIFY `provider` ENUM('alfa','mtc','wish','mb_wish_us','mb_wish_lb','pc_wish_us','pc_wish_lb','my_balance')
+            NOT NULL
+        ");
 
         if (!DB::table('balances')->where('provider', 'wish')->exists()) {
             DB::table('balances')->insert([
@@ -55,6 +70,7 @@ return new class extends Migration
 
         DB::table('balances')->whereIn('provider', ['mb_wish_us','mb_wish_lb','pc_wish_us','pc_wish_lb'])->delete();
 
+        // الرجوع للصيغة القديمة
         DB::statement("
             ALTER TABLE `balances`
             MODIFY `provider` ENUM('alfa','mtc','wish','my_balance')
