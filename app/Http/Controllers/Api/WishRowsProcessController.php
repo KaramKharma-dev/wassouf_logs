@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -37,17 +38,14 @@ class WishRowsProcessController extends Controller
                     if (!($case1 || $case2)) { $skipped++; continue; }
 
                     DB::transaction(function () use ($row, $case1, $debit, $case2, $credit, &$processed) {
-                        // قفل أرصدة الهدف
                         DB::table('balances')->whereIn('provider',['mb_wish_us','my_balance'])->lockForUpdate()->get();
 
                         if ($case1) {
-                            // mb_wish_us -= debit, my_balance += debit
                             DB::table('balances')->where('provider','mb_wish_us')
                                 ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                             DB::table('balances')->where('provider','my_balance')
                                 ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
                         } else {
-                            // mb_wish_us += credit, my_balance -= (credit - 1%)
                             $myDelta = $credit - ($credit * 0.01); // 99%
                             DB::table('balances')->where('provider','mb_wish_us')
                                 ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
@@ -55,7 +53,6 @@ class WishRowsProcessController extends Controller
                                 ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$myDelta))]);
                         }
 
-                        // تعليم السطر كـ “تم” باستخدام INVALID كما طلبت بدون تغيير السكيمة
                         DB::table('wish_rows_raw')->where('id',$row->id)->update([
                             'row_status' => 'INVALID',
                             'updated_at' => now(),
