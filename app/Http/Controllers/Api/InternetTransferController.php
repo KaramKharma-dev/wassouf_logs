@@ -33,13 +33,13 @@ class InternetTransferController extends Controller
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
                 'mtc' => [
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
             ],
             'monthly_internet' => [
@@ -47,13 +47,13 @@ class InternetTransferController extends Controller
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
                 'mtc' => [
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
             ],
             'weekly' => [
@@ -147,13 +147,13 @@ class InternetTransferController extends Controller
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
                 'mtc' => [
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
             ],
             'monthly_internet' => [
@@ -161,13 +161,13 @@ class InternetTransferController extends Controller
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
                 'mtc' => [
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
                     '22'=>['deduct'=>14.5,'add'=>16],'44'=>['deduct'=>21,'add'=>24],
                     '77'=>['deduct'=>31,'add'=>35],'111'=>['deduct'=>40,'add'=>45],
-                    '444'=>['deduct'=>129,'add'=>135],
+                    '444'=>['deduct'=>129,'add'=>145],
                 ],
             ],
             'weekly' => [
