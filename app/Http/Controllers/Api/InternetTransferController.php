@@ -120,17 +120,7 @@ class InternetTransferController extends Controller
 
     return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
 
-        // 0) فحص بحسب الهاش مع قفل
-        $existingByHash = InternetTransfer::where('sms_hash', $smsHash)
-            ->lockForUpdate()
-            ->first();
-
-        if ($existingByHash && $existingByHash->status === 'COMPLETED') {
-            // نفس الرسالة مُعالجة سابقاً
-            return response()->json(['ok'=>true,'msg'=>'duplicate sms ignored'], 200);
-        }
-
-        // 1) استخراج الرقم والكمية
+        // 1) استخرج الرقم والكمية
         $msisdn = $this->extractMsisdnFromSms($rawSms);
         $qty    = $this->extractQtyGbFromSms($rawSms);
 
@@ -141,7 +131,7 @@ class InternetTransferController extends Controller
             return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
         }
 
-        // 2) ابحث مرشّح PENDING يطابق الرقم والكمية والمزوّد
+        // 2) إن وُجد PENDING مطابق اقفله، وإلا أنشئ صف COMPLETED جديد
         $candidate = InternetTransfer::where('status','PENDING')
             ->where('provider',$provider)
             ->where('receiver_number', $msisdn)
@@ -150,12 +140,7 @@ class InternetTransferController extends Controller
             ->lockForUpdate()
             ->first();
 
-        // لو في صف بنفس الهاش لكنه PENDING استخدمه كمرشح
-        if (!$candidate && $existingByHash && $existingByHash->status === 'PENDING') {
-            $candidate = $existingByHash;
-        }
-
-        // جدول الأسعار
+        // جدول الأسعار (نفسه المعتمد بباقي الدوال)
         $pricing = [
             'monthly' => [
                 'alfa' => [
@@ -200,7 +185,7 @@ class InternetTransferController extends Controller
         ];
 
         if ($candidate) {
-            // استخدم نوع العملية من المرشح نفسه
+            // أكمل الموجود
             $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
             $type   = $candidate->type;
             $prov   = $candidate->provider;
@@ -217,7 +202,7 @@ class InternetTransferController extends Controller
 
             $candidate->status       = 'COMPLETED';
             $candidate->confirmed_at = now();
-            $candidate->sms_hash     = $smsHash;
+            $candidate->sms_hash     = $smsHash; // للحفظ فقط، لا منع
             $candidate->sms_meta     = [
                 'sender' => $data['sms_sender'] ?? null,
                 'raw'    => $rawSms,
@@ -232,7 +217,7 @@ class InternetTransferController extends Controller
             ], 200);
         }
 
-        // لا يوجد PENDING مطابق -> أنشئ COMPLETED جديد
+        // إنشاء صف COMPLETED جديد
         [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
         if ($pickedType === null) {
             return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
@@ -250,7 +235,7 @@ class InternetTransferController extends Controller
         $row->type            = $pickedType;
         $row->status          = 'COMPLETED';
         $row->confirmed_at    = now();
-        $row->sms_hash        = $smsHash;
+        $row->sms_hash        = $smsHash; // للحفظ فقط
         $row->sms_meta        = [
             'sender' => $data['sms_sender'] ?? null,
             'raw'    => $rawSms,
