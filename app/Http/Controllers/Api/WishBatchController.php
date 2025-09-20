@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\WishBatchUploadRequest;
 use App\Models\WishBatch;
 use App\Models\WishRowRaw;
+use App\Models\WishRowAlt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Parser;
@@ -14,7 +15,18 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 class WishBatchController extends Controller
 {
-    public function store(WishBatchUploadRequest $req)
+    // USD → الجدول القديم
+    public function storeUsd(WishBatchUploadRequest $req) {
+        return $this->storeWithPreset($req, sink: 'raw', currency: 'USD');
+    }
+
+    // LBP → الجدول الجديد
+    public function storeLbp(WishBatchUploadRequest $req) {
+        return $this->storeWithPreset($req, sink: 'alt', currency: 'LBP');
+    }
+
+    // المنفّذ المشترك
+    private function storeWithPreset(WishBatchUploadRequest $req, string $sink, string $currency)
     {
         $uploaded = $req->file('file');
         $bytes = file_get_contents($uploaded->getRealPath());
@@ -24,23 +36,27 @@ class WishBatchController extends Controller
         if ($exists = WishBatch::where('checksum', $checksum)->first()) {
             return response()->json([
                 'batch_id' => $exists->id,
+                'sink'     => $exists->sink,
+                'currency' => $exists->currency,
                 'status'   => $exists->status,
                 'message'  => 'already_uploaded',
             ], 200);
         }
 
-        return DB::transaction(function () use ($uploaded, $bytes, $checksum) {
+        return DB::transaction(function () use ($uploaded, $bytes, $checksum, $sink, $currency) {
             $batch = WishBatch::create([
                 'filename' => $uploaded->getClientOriginalName() ?: ('wish_' . now()->format('Ymd_His') . '.' . strtolower($uploaded->getClientOriginalExtension())),
                 'checksum' => $checksum,
                 'status'   => 'UPLOADED',
+                'sink'     => $sink,      // raw أو alt
+                'currency' => $currency,  // USD أو LBP
             ]);
 
             // حفظ الأصل
             $path = "wish/batches/{$batch->id}/original." . strtolower($uploaded->getClientOriginalExtension());
             Storage::disk('local')->put($path, $bytes);
 
-            // اختيار المحلل حسب الامتداد
+            // التحليل
             $ext = strtolower($uploaded->getClientOriginalExtension());
             if (in_array($ext, ['xlsx','xls'])) {
                 [$issuedOn, $rows] = $this->parseSpreadsheet($bytes);
@@ -49,11 +65,13 @@ class WishBatchController extends Controller
                 [$issuedOn, $rows, $rawText] = $this->parsePdf($bytes);
             }
 
-            // Debug نصّي عند صفر صفوف
+            // Debug نصّي عند صفر صفوف (PDF)
             if (count($rows) === 0 && $rawText !== null) {
-                $dbgPath = "wish/batches/{$batch->id}/extracted_debug.txt";
-                Storage::disk('local')->put($dbgPath, $rawText ?: '[empty]');
+                Storage::disk('local')->put("wish/batches/{$batch->id}/extracted_debug.txt", $rawText ?: '[empty]');
             }
+
+            // اختيار الجدول
+            $rowModel = ($sink === 'alt') ? WishRowAlt::class : WishRowRaw::class;
 
             // إدخال السطور
             $seq = 0; $valid = 0; $invalid = 0;
@@ -77,7 +95,7 @@ class WishBatchController extends Controller
                     $r['balance_after'] ?? ''
                 ]));
 
-                WishRowRaw::create([
+                $rowModel::create([
                     'batch_id'      => $batch->id,
                     'seq_no'        => $seq,
                     'op_date'       => $r['op_date'] ?? null,
@@ -92,7 +110,7 @@ class WishBatchController extends Controller
                 ]);
             }
 
-            // تحديث ملخص الدفعة
+            // تحديث الدفعة
             $batch->update([
                 'issued_on'    => $issuedOn,
                 'rows_total'   => $valid + $invalid,
@@ -103,6 +121,8 @@ class WishBatchController extends Controller
 
             return response()->json([
                 'batch_id'      => $batch->id,
+                'sink'          => $batch->sink,
+                'currency'      => $batch->currency,
                 'issued_on'     => optional($issuedOn)?->toDateString(),
                 'rows_total'    => $batch->rows_total,
                 'rows_valid'    => $batch->rows_valid,
@@ -122,8 +142,8 @@ class WishBatchController extends Controller
         $pdf = $parser->parseContent($bytes);
         $text = trim($pdf->getText());
 
-        $opening = $this->matchOpeningBalance($text); // float|null
-        $issuedOn = $this->matchIssuedOn($text);      // Carbon|null
+        $opening = $this->matchOpeningBalance($text);
+        $issuedOn = $this->matchIssuedOn($text);
         $lines = $this->extractOperationLines($text);
 
         $rows = [];
@@ -138,7 +158,6 @@ class WishBatchController extends Controller
             $rest = $m['rest'];
 
             if (!preg_match('/(?<amount>(\d{1,3}(,\d{3})*|\d+)\.\d{2})\s+(?<balance>(\d{1,3}(,\d{3})*|\d+)\.\d{2})\s*$/u', $rest, $mm)) {
-                // رصيد فقط
                 if (preg_match('/(?<balance>(\d{1,3}(,\d{3})*|\d+)\.\d{2})\s*$/u', $rest, $mb)) {
                     $balanceAfter = $this->num($mb['balance']);
                     $amount = null;
@@ -198,7 +217,7 @@ class WishBatchController extends Controller
         $reader->setReadDataOnly(true);
         $sheet = $reader->load($path)->getActiveSheet();
 
-        // البحث عن الهيدر
+        // الهيدر
         $headerRow = null;
         $headers = [];
         foreach ($sheet->getRowIterator() as $row) {
@@ -238,7 +257,7 @@ class WishBatchController extends Controller
         for ($r = $headerRow + 1; $r <= $sheet->getHighestRow(); $r++) {
             $get = function($idx) use ($sheet, $r) {
                 if ($idx === null) return null;
-                $col = Coordinate::stringFromColumnIndex($idx + 1); // A,B,C...
+                $col = Coordinate::stringFromColumnIndex($idx + 1);
                 return trim((string)$sheet->getCell($col . $r)->getFormattedValue());
             };
 

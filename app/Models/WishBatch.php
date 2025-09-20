@@ -9,8 +9,9 @@ class WishBatch extends Model
 {
     protected $fillable = [
         'filename','checksum','statement_from','statement_to','issued_on',
-        'status','rows_total','rows_valid','rows_invalid',
-    ];
+        'status','sink','currency','rows_total','rows_valid','rows_invalid',
+        ];
+
 
     protected $casts = [
         'statement_from' => 'date',
