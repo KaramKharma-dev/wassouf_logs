@@ -2,16 +2,11 @@
 
 use Illuminate\Support\Facades\Route;
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
-| be assigned to the "web" middleware group. Make something great!
-|
-*/
+use App\Http\Controllers\WishRowsProcessController;
+
+Route::get('/wish/process', [WishRowsProcessController::class, 'index'])->name('wish.process.index');
+Route::post('/wish/process', [WishRowsProcessController::class, 'run'])->name('wish.process.run');
+
 
 Route::get('/', function () {
     return view('welcome');
