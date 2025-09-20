@@ -285,5 +285,35 @@ class InternetTransferController extends Controller
 
         return [null, null, null];
     }
+    private function normalizeMsisdn(string $n): string
+    {
+        $n = preg_replace('/\D+/', '', $n);
+        if (str_starts_with($n, '00961')) $n = substr($n, 5);
+        elseif (str_starts_with($n, '961')) $n = substr($n, 3);
+        if (strlen($n) > 8) $n = substr($n, -8);
+        return $n;
+    }
+
+    private function extractMsisdnFromSms(string $text): ?string
+    {
+        // أولوية للنمط "number <digits>"
+        if (preg_match('/number\s+(\d{7,8})\b/i', $text, $m)) {
+            return $this->normalizeMsisdn($m[1]);
+        }
+        // احتياط: أي 7–8 أرقام مستقلة
+        if (preg_match('/\b(\d{7,8})\b/', $text, $m)) {
+            return $this->normalizeMsisdn($m[1]);
+        }
+        return null;
+    }
+
+    private function extractQtyGbFromSms(string $text): ?float
+    {
+        // يلتقط القيمة قبل GB مثل "22GB" أو "1.5 GB"
+        if (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*GB\b/i', $text, $m)) {
+            return round((float)$m[1], 3);
+        }
+        return null;
+    }
 
 }
