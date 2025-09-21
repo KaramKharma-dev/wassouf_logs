@@ -62,7 +62,7 @@ class WishRowsProcessController extends Controller
                 $skipped++; continue;
             }
 
-            DB::transaction(function () use ($row, $debit, $credit, $descRaw, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, &$processed, &$skipped) {
+            DB::transaction(function () use ($row, $debit, $credit, $descRaw, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, &$processed, &$skipped) {
 
                 $providersToLock = ['mb_wish_us','my_balance'];
                 if ($isCurrencyEx) { $providersToLock = ['mb_wish_us','mb_wish_lb']; }
