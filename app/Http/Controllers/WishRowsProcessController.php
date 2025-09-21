@@ -41,8 +41,8 @@ class WishRowsProcessController extends Controller
             $debit   = $row->debit  !== null ? (float)$row->debit  : null;
             $credit  = $row->credit !== null ? (float)$row->credit : null;
 
-            $isW2W_or_QR_debitOnly      = (in_array($service, ['W2W','QR COLLECT']) && $debit !== null && $credit === null);
-            $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP'])     && $credit !== null && $debit === null);
+            $isW2W_or_QR_debitOnly      = (in_array($service, ['W2W','QR COLLECT','WEDDING GIFT']) && $debit !== null && $credit === null);
+            $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP','WEDDING GIFT'])     && $credit !== null && $debit === null);
 
             // TikTok: SERVICE = PAY BY CARD && description contains TIKTOK (debit only)
             $isTiktok = ($service === 'PAY BY CARD' && str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
