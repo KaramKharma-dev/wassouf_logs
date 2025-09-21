@@ -4,7 +4,7 @@
 <style>
   :root{--bg:#0b1020;--card:#121731;--muted:#9aa4c7;--acc:#4f7cff;--ok:#22c55e;--err:#ef4444}
   body{background:var(--bg);color:#e6ebff}
-  .wrap{max-width:900px;margin:auto;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .wrap{max-width:980px;margin:auto;display:grid;grid-template-columns:1fr 1fr;gap:18px}
   .card{background:var(--card);border:1px solid #222a52;border-radius:18px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
   .h{font-size:18px;margin:0 0 12px}
   .muted{color:var(--muted);font-size:13px}
@@ -22,38 +22,41 @@
   .file-name{font-size:13px;color:#c9d3ff;margin-top:8px;word-break:break-all}
   .progress{height:10px;background:#0b1030;border-radius:999px;margin-top:10px;overflow:hidden;border:1px solid #2a3470}
   .bar{height:100%;width:0%;background:linear-gradient(90deg,#4f7cff,#7aa2ff)}
-  @media (max-width:900px){.wrap{grid-template-columns:1fr}}
+  pre{white-space:pre-wrap;background:#0b1030;border:1px solid #2a3470;border-radius:12px;padding:10px;color:#cfe1ff;max-height:300px;overflow:auto}
+  @media (max-width:980px){.wrap{grid-template-columns:1fr}}
 </style>
 
 <div class="wrap">
   <!-- بطاقة اختيار التاريخ وتشغيل المعالجة -->
-  <div class="card">
+  <div class="card" dir="rtl">
     @if(session('status'))
       <div class="alert ok">{{ session('status') }}</div>
     @endif
     <h3 class="h">معالجة قيود Wish حسب التاريخ</h3>
+
     <form method="get" action="{{ route('wish.process.index') }}" class="row" style="margin-bottom:10px">
       <input type="date" name="date" class="input" value="{{ $date }}">
       <button class="btn">تعيين</button>
     </form>
+
     <div class="row links" style="margin-bottom:16px">
       <a href="{{ route('wish.process.index', ['date'=>now()->toDateString()]) }}">اليوم</a>
       <a href="{{ route('wish.process.index', ['date'=>now()->subDay()->toDateString()]) }}">أمس</a>
     </div>
+
     <form method="post" action="{{ route('wish.process.run') }}">
       @csrf
       <input type="hidden" name="date" value="{{ $date }}">
       <button class="btn full">بدء المعالجة</button>
     </form>
+
     <p class="muted" style="margin-top:8px">يعالج فقط الصفوف ذات <code>row_status=VALID</code>.</p>
   </div>
 
   <!-- بطاقة رفع Excel إلى API -->
-  <div class="card">
+  <div class="card" dir="rtl">
     <h3 class="h">رفع كشف Wish (USD) — Excel</h3>
-    <p class="muted">سيُرسَل الملف إلى واجهة الـAPI:
-      <code>/api/wish/usd/batches</code> مع <code>Accept: application/json</code>.
-    </p>
+    <p class="muted">سيتم الإرسال إلى <code>/api/wish/usd/batches</code> بهيدر <code>Accept: application/json</code>.</p>
 
     <div id="drop" class="uploader" tabindex="0">
       <div>اسحب الملف إلى هنا أو</div>
@@ -61,6 +64,7 @@
         <button id="pick" type="button" class="btn secondary">اختر ملف</button>
       </div>
       <div id="fname" class="file-name" style="display:none"></div>
+
       <div class="progress" style="display:none" id="pwrap"><div class="bar" id="pbar"></div></div>
       <div id="msg" style="margin-top:10px"></div>
     </div>
@@ -75,7 +79,9 @@
 
 <script>
 (function(){
-  const apiUrl = "{{ url('/api/wish/usd/batches') }}"; // نفس الدومين
+  // مسار نسبي لتجنب Mixed Content
+  const apiUrl = "/api/wish/usd/batches";
+
   const drop = document.getElementById('drop');
   const pick = document.getElementById('pick');
   const fileInput = document.getElementById('file');
@@ -84,13 +90,14 @@
   const pwrap = document.getElementById('pwrap');
   const pbar  = document.getElementById('pbar');
   const msg   = document.getElementById('msg');
+
   let theFile = null;
 
   function setFile(f){
-    theFile = f;
-    if (f){
+    theFile = f || null;
+    if (theFile){
       fname.style.display = 'block';
-      fname.textContent = f.name + " (" + Math.round(f.size/1024) + " KB)";
+      fname.textContent = theFile.name + " (" + Math.round(theFile.size/1024) + " KB)";
       sendBtn.disabled = false;
       msg.innerHTML = "";
     } else {
@@ -100,7 +107,7 @@
   }
 
   pick.addEventListener('click', ()=> fileInput.click());
-  fileInput.addEventListener('change', (e)=> setFile(e.target.files[0] || null));
+  fileInput.addEventListener('change', (e)=> setFile(e.target.files[0]));
 
   ['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, e=>{
     e.preventDefault(); e.stopPropagation(); drop.classList.add('drag');
@@ -110,9 +117,10 @@
   }));
   drop.addEventListener('drop', e=>{
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    setFile(f || null);
+    setFile(f);
   });
 
+  // نستخدم XMLHttpRequest لأجل شريط التقدم
   sendBtn.addEventListener('click', function(){
     if(!theFile){ return; }
     msg.innerHTML = "";
@@ -126,30 +134,35 @@
     const xhr = new XMLHttpRequest();
     xhr.open('POST', apiUrl, true);
     xhr.setRequestHeader('Accept','application/json'); // مهم
+
     xhr.upload.onprogress = function(e){
       if(e.lengthComputable){
         const pct = Math.round((e.loaded / e.total) * 100);
         pbar.style.width = pct + '%';
       }
     };
+
     xhr.onreadystatechange = function(){
       if(xhr.readyState === 4){
         sendBtn.disabled = false;
-        let content;
-        try { content = JSON.parse(xhr.responseText); } catch(_){ content = {raw:xhr.responseText}; }
+
+        let body = xhr.responseText;
+        // حاول JSON
+        try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
+
         if(xhr.status >= 200 && xhr.status < 300){
-          msg.innerHTML = '<div class="alert ok">تم الرفع بنجاح</div><pre style="white-space:pre-wrap">'+
-            escapeHtml(JSON.stringify(content, null, 2)) + '</pre>';
+          msg.innerHTML = '<div class="alert ok">تم الرفع بنجاح</div><pre>'+escapeHtml(body)+'</pre>';
         } else {
-          msg.innerHTML = '<div class="alert err">فشل الرفع ('+xhr.status+')</div><pre style="white-space:pre-wrap">'+
-            escapeHtml(JSON.stringify(content, null, 2)) + '</pre>';
+          msg.innerHTML = '<div class="alert err">فشل الرفع ('+xhr.status+')</div><pre>'+escapeHtml(body)+'</pre>';
         }
       }
     };
+
     xhr.onerror = function(){
       sendBtn.disabled = false;
       msg.innerHTML = '<div class="alert err">خطأ شبكة أثناء الرفع</div>';
     };
+
     xhr.send(fd);
   });
 
