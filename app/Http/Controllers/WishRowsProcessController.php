@@ -86,13 +86,15 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
 
                 } elseif ($isCurrencyEx) {
-                    // خصم من mb_wish_us, إضافة إلى mb_wish_lb = debit * rate
-                    $rate = $this->extractLbpRate($row->description ?? '');
-                    $lbp  = $debit * $rate;
-                    DB::table('balances')->where('provider','mb_wish_us')
-                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
-                    DB::table('balances')->where('provider','mb_wish_lb')
-                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$lbp))]);
+                        $rate = $this->extractLbpRate($row->description ?? '');
+                        // لو ما قدر يقرأ السعر، لا تعالج هذا السطر
+                        if ($rate <= 0) { return; }
+
+                        $lbp = $debit * $rate; // مثال: 10 * 89500 = 895000
+                        DB::table('balances')->where('provider','mb_wish_us')
+                            ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+                        DB::table('balances')->where('provider','mb_wish_lb')
+                            ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$lbp))]);
 
                 } elseif ($isItunes || $isRazer) {
                     // خصم debit من mb_wish_us، إضافة على my_balance: +1 أقل من 50، وإلا +2
@@ -138,14 +140,13 @@ class WishRowsProcessController extends Controller
      * "USD TO LBP-1 USD?89,500 LBP" → 89500
      */
     private function extractLbpRate(string $desc): float
-    {
-        // التقط أول رقم كبير مع فواصل
-        if (preg_match('/([0-9][0-9.,\s]+)/', $desc, $m)) {
-            $num = preg_replace('/[^0-9]/', '', $m[1]); // إزالة الفواصل
-            if ($num !== '') {
-                return (float)$num;
+        {
+            // يلتقط الرقم قبل كلمة LBP ضمن نص USD TO LBP
+            if (preg_match('/USD\s*TO\s*LBP.*?([0-9][0-9,\.]*)\s*LBP/i', $desc, $m)) {
+                $num = preg_replace('/[^0-9]/', '', $m[1]); // يحذف الفواصل
+                if ($num !== '') return (float)$num;        // 89500, 89000, ...
             }
+            return 0.0;
         }
-        return 0.0;
-    }
+
 }
