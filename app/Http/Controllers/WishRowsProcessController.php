@@ -85,16 +85,23 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
 
-                } elseif ($isCurrencyEx) {
+                }  elseif ($isCurrencyEx) {
+                        // مثال description: "USD TO LBP-1 USD?89,500 LBP" => rate = 89500
                         $rate = $this->extractLbpRate($row->description ?? '');
-                        // لو ما قدر يقرأ السعر، لا تعالج هذا السطر
-                        if ($rate <= 0) { return; }
+                        if ($rate <= 0) { $skipped++; return; }
 
-                        $lbp = $debit * $rate; // مثال: 10 * 89500 = 895000
+                        $lbp = $debit * $rate;
+
+                        // قفل الأرصدة المطلوبة
+                        DB::table('balances')->whereIn('provider',['mb_wish_us','mb_wish_lb'])->lockForUpdate()->get();
+
+                        // mb_wish_us -= debit
                         DB::table('balances')->where('provider','mb_wish_us')
-                            ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+                            ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
+
+                        // mb_wish_lb += debit * rate
                         DB::table('balances')->where('provider','mb_wish_lb')
-                            ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$lbp))]);
+                            ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
                 } elseif ($isItunes || $isRazer) {
                     // خصم debit من mb_wish_us، إضافة على my_balance: +1 أقل من 50، وإلا +2
