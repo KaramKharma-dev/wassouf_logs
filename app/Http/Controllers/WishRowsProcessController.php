@@ -35,19 +35,22 @@ class WishRowsProcessController extends Controller
         foreach ($rows as $row) {
             $serviceRaw = trim($row->service ?? '');
             $service = strtoupper($serviceRaw);
+            $descRaw = trim($row->description ?? '');
+            $desc = strtoupper($descRaw);
+
             $debit   = $row->debit  !== null ? (float)$row->debit  : null;
             $credit  = $row->credit !== null ? (float)$row->credit : null;
 
-            $isW2W_or_QR_debitOnly   = (in_array($service, ['W2W','QR COLLECT']) && $debit !== null && $credit === null);
-            $isW2W_or_TOPUP_creditOnly = (in_array($service, ['W2W','TOPUP'])     && $credit !== null && $debit === null);
+            $isW2W_or_QR_debitOnly      = (in_array($service, ['W2W','QR COLLECT']) && $debit !== null && $credit === null);
+            $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP'])     && $credit !== null && $debit === null);
 
-            // NEW: TikTok (debit only)
-            $isTiktok = ($service === 'TIKTOK' && $debit !== null && $credit === null);
+            // TikTok: SERVICE = PAY BY CARD && description contains TIKTOK (debit only)
+            $isTiktok = ($service === 'PAY BY CARD' && str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
 
-            // NEW: Currency Exchange (debit only, to LBP)
+            // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
 
-            // NEW: iTunes (any text contains ITUNES) and RAZER (debit only)
+            // iTunes (any text contains ITUNES) and RAZER (debit only)
             $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
 
@@ -57,20 +60,17 @@ class WishRowsProcessController extends Controller
 
             DB::transaction(function () use ($row, $debit, $credit, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, &$processed) {
 
-                // أقفال الأرصدة المستعملة
                 $providersToLock = ['mb_wish_us','my_balance'];
                 if ($isCurrencyEx) { $providersToLock = ['mb_wish_us','mb_wish_lb']; }
                 DB::table('balances')->whereIn('provider', $providersToLock)->lockForUpdate()->get();
 
                 if ($isW2W_or_QR_debitOnly) {
-                    // mb_wish_us -= debit, my_balance += debit
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isW2W_or_TOPUP_creditOnly) {
-                    // mb_wish_us += credit, my_balance -= (credit - 1%)
                     $myDelta = $credit - ($credit * 0.01);
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
@@ -78,33 +78,24 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$myDelta))]);
 
                 } elseif ($isTiktok) {
-                    // خصم debit من mb_wish_us، وإضافة قيمة مقربة على my_balance
-                    $award = $this->tiktokBucket($debit); // أقرب سلّة أعلى
+                    $award = $this->tiktokBucket($debit);
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
 
-                }  elseif ($isCurrencyEx) {
-                        // مثال description: "USD TO LBP-1 USD?89,500 LBP" => rate = 89500
-                        $rate = $this->extractLbpRate($row->description ?? '');
-                        if ($rate <= 0) { $skipped++; return; }
+                } elseif ($isCurrencyEx) {
+                    $rate = $this->extractLbpRate($row->description ?? '');
+                    if ($rate <= 0) { return; }
+                    $lbp = $debit * $rate;
 
-                        $lbp = $debit * $rate;
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
 
-                        // قفل الأرصدة المطلوبة
-                        DB::table('balances')->whereIn('provider',['mb_wish_us','mb_wish_lb'])->lockForUpdate()->get();
-
-                        // mb_wish_us -= debit
-                        DB::table('balances')->where('provider','mb_wish_us')
-                            ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
-
-                        // mb_wish_lb += debit * rate
-                        DB::table('balances')->where('provider','mb_wish_lb')
-                            ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
+                    DB::table('balances')->where('provider','mb_wish_lb')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
                 } elseif ($isItunes || $isRazer) {
-                    // خصم debit من mb_wish_us، إضافة على my_balance: +1 أقل من 50، وإلا +2
                     $bonus = ($debit < 50) ? 1.00 : 2.00;
                     $toAdd = $debit + $bonus;
                     DB::table('balances')->where('provider','mb_wish_us')
@@ -113,7 +104,6 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
                 }
 
-                // علّم السطر كمُعالج
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
                     'row_status' => 'INVALID',
                     'updated_at' => now(),
@@ -128,32 +118,21 @@ class WishRowsProcessController extends Controller
             ->with('status', "eligible=$eligible processed=$processed skipped=$skipped");
     }
 
-    /**
-     * TikTok bucket: اختيار أقرب سلة أعلى.
-     * أمثلة مطلوبة: 10.39 → 12 ، 16..19 → 20 ، 93..99 → 100.
-     */
     private function tiktokBucket(float $debit): float
     {
         $buckets = [12,15,20,25,30,40,50,60,75,100,150,200];
         foreach ($buckets as $b) {
             if ($debit <= $b - 0.0001) return (float)$b;
         }
-        // لو أكبر من آخر سلة, قرّب لأعلى 50
         return (float)(ceil($debit / 50) * 50);
     }
 
-    /**
-     * استخراج سعر LBP من نص مثل:
-     * "USD TO LBP-1 USD?89,500 LBP" → 89500
-     */
     private function extractLbpRate(string $desc): float
-        {
-            // يلتقط الرقم قبل كلمة LBP ضمن نص USD TO LBP
-            if (preg_match('/USD\s*TO\s*LBP.*?([0-9][0-9,\.]*)\s*LBP/i', $desc, $m)) {
-                $num = preg_replace('/[^0-9]/', '', $m[1]); // يحذف الفواصل
-                if ($num !== '') return (float)$num;        // 89500, 89000, ...
-            }
-            return 0.0;
+    {
+        if (preg_match('/USD\s*TO\s*LBP.*?([0-9][0-9,\.]*)\s*LBP/i', $desc, $m)) {
+            $num = preg_replace('/[^0-9]/', '', $m[1]);
+            if ($num !== '') return (float)$num;
         }
-
+        return 0.0;
+    }
 }
