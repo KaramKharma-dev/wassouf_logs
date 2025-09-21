@@ -56,8 +56,9 @@ class WishRowsProcessController extends Controller
 
             // NEW: TOUCH / ALFA (debit only, description holds $amount)
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
+            $isAnghami = ($service === 'ANGHAMI' && $debit !== null && $credit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa)) {
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami)) {
                 $skipped++; continue;
             }
 
@@ -126,8 +127,15 @@ class WishRowsProcessController extends Controller
                         // قيم غير معروفة حالياً → لا نضيف شيء (أو عدّل حسب رغبتك)
                         // اتركها بلا إضافة على my_balance
                     }
+                } elseif ($isAnghami) {
+                    // mb_wish_us -= debit
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+                    // my_balance += (debit + 1)
+                    $toAdd = $debit + 1.00;
+                    DB::table('balances')->where('provider','my_balance')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
                 }
-
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
                     'row_status' => 'INVALID',
                     'updated_at' => now(),
