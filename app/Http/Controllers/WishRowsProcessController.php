@@ -44,21 +44,24 @@ class WishRowsProcessController extends Controller
             $isW2W_or_QR_debitOnly      = (in_array($service, ['W2W','QR COLLECT','WEDDING GIFT']) && $debit !== null && $credit === null);
             $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP','WEDDING GIFT'])     && $credit !== null && $debit === null);
 
-            // TikTok: SERVICE = PAY BY CARD && description contains TIKTOK (debit only)
+            // PAY BY CARD + description contains TIKTOK (debit only)
             $isTiktok = ($service === 'PAY BY CARD' && str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
 
             // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
 
-            // iTunes (any text contains ITUNES) and RAZER (debit only)
+            // ITUNES* or RAZER (debit only)
             $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer)) {
+            // NEW: TOUCH / ALFA (debit only, description holds $amount)
+            $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
+
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa)) {
                 $skipped++; continue;
             }
 
-            DB::transaction(function () use ($row, $debit, $credit, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, &$processed) {
+            DB::transaction(function () use ($row, $debit, $credit, $descRaw, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, &$processed, &$skipped) {
 
                 $providersToLock = ['mb_wish_us','my_balance'];
                 if ($isCurrencyEx) { $providersToLock = ['mb_wish_us','mb_wish_lb']; }
@@ -86,7 +89,7 @@ class WishRowsProcessController extends Controller
 
                 } elseif ($isCurrencyEx) {
                     $rate = $this->extractLbpRate($row->description ?? '');
-                    if ($rate <= 0) { return; }
+                    if ($rate <= 0) { $skipped++; return; }
                     $lbp = $debit * $rate;
 
                     DB::table('balances')->where('provider','mb_wish_us')
@@ -102,6 +105,27 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
+
+                } elseif ($isTouchOrAlfa) {
+                    // استخرج المبلغ من الوصف: "TOUCH $7.58-+961..." أو "ALFA $4.5-+961..."
+                    $amt = $this->extractLeadingUsdAmount($descRaw);
+                    if ($amt <= 0) { $skipped++; return; }
+
+                    // mb_wish_us -= debit دائماً
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+
+                    // my_balance += حسب الحالة: 7.58 → 9 ، 4.5 → 5.61
+                    if ($this->ne($amt, 7.58)) {
+                        DB::table('balances')->where('provider','my_balance')
+                            ->update(['balance' => DB::raw('balance + 9.00')]);
+                    } elseif ($this->ne($amt, 4.5)) {
+                        DB::table('balances')->where('provider','my_balance')
+                            ->update(['balance' => DB::raw('balance + 5.61')]);
+                    } else {
+                        // قيم غير معروفة حالياً → لا نضيف شيء (أو عدّل حسب رغبتك)
+                        // اتركها بلا إضافة على my_balance
+                    }
                 }
 
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
@@ -134,5 +158,20 @@ class WishRowsProcessController extends Controller
             if ($num !== '') return (float)$num;
         }
         return 0.0;
+    }
+
+    // يلتقط الرقم بعد رمز $ في بداية الوصف: "TOUCH $7.58-+961..." أو "ALFA $4.5-+961..."
+    private function extractLeadingUsdAmount(string $desc): float
+    {
+        if (preg_match('/\$\s*([0-9]+(?:\.[0-9]+)?)/', $desc, $m)) {
+            return (float)$m[1];
+        }
+        return 0.0;
+    }
+
+    // مقارنة بفروقات عشرية صغيرة
+    private function ne(float $a, float $b, float $eps = 0.02): bool
+    {
+        return abs($a - $b) <= $eps;
     }
 }
