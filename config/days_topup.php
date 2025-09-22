@@ -1,4 +1,3 @@
-// config/days_topup.php
 <?php
 return [
   'pricing' => [1=>3.37, 3=>6.74, 6=>10.11, 12=>16.854],
