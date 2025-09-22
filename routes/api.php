@@ -6,9 +6,13 @@ use App\Http\Controllers\Api\UsdTransferController;
 use App\Http\Controllers\Api\UsdSmsHookController;
 use App\Http\Controllers\Api\InternetTransferController;
 use App\Http\Controllers\Api\WishBatchController;
-use App\Http\Controllers\Api\DaysUsdController;
 
-Route::post('/days/usd-ingest', [DaysUsdController::class, 'ingest']);
+use App\Http\Controllers\Api\DaysDailyController;
+
+Route::prefix('days')->group(function () {
+    Route::post('/daily/add', [DaysDailyController::class,'add']);           // تجميع حسب التاريخ
+    Route::post('/daily/finalize', [DaysDailyController::class,'finalize']); // أثر مالي يدوي
+});
 
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);       // إنشاء طلب من الفرونت (Pending)
 Route::post('/hooks/usd-sms',  [UsdSmsHookController::class, 'store']);

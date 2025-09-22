@@ -8,125 +8,118 @@ use App\Models\Balance;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class DaysTopupService
 {
-    public function ingestUsdMsg(string $msisdn, string $provider, float $amount, Carbon $ts): void
+    // إضافة رسالة وتحديث سطر اليوم لنفس الرقم+المزوّد (بدون خصم Wish)
+    public function addMsgByDate(string $msisdn, string $provider, float $amount, Carbon $ts): DaysTransfer
     {
-        // أقفل أي جلسات انتهت نافذتها حتى لحظة هذه الرسالة
-        $this->closeExpiredSessions($ts);
-
-        // تحقق القيم المسموحة
         $allowed = Config::get('days_topup.allowed_msg_values', []);
         if (!in_array($amount, $allowed, true)) {
-            return;
+            throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
 
-        DB::transaction(function () use ($msisdn, $provider, $amount, $ts) {
-            // خزّن الرسالة
+        $opDate = $ts->timezone(config('app.timezone'))->toDateString();
+
+        return DB::transaction(function () use ($msisdn,$provider,$amount,$ts,$opDate) {
+            // خزن الرسالة الخام
             UsdInMsg::create([
-                'msisdn'      => $msisdn,
-                'provider'    => $provider,
-                'amount'      => $amount,
-                'received_at' => $ts,
+                'msisdn'=>$msisdn, 'provider'=>$provider,
+                'amount'=>$amount, 'received_at'=>$ts,
             ]);
 
-            $now = $ts->copy();
-            $windowHours  = (int) Config::get('days_topup.window_hours', 5);
-            $windowEndsAt = $now->copy()->addHours($windowHours);
-
-            // جلسة مفتوحة لنفس الرقم+المزوّد
-            $session = DaysTransfer::query()
-                ->where('receiver_number', $msisdn)
-                ->where('provider', $provider)
-                ->where('status', 'OPEN')
-                ->orderByDesc('id')
-                ->lockForUpdate()
+            // سطر اليوم
+            $row = DaysTransfer::lockForUpdate()
+                ->where('receiver_number',$msisdn)
+                ->where('provider',$provider)
+                ->where('op_date',$opDate)
                 ->first();
 
-            if (!$session) {
-                $session = DaysTransfer::create([
-                    'sender_number'     => $msisdn,
-                    'receiver_number'   => $msisdn,
-                    'provider'          => $provider,
-                    'amount_usd'        => 0,
-                    'sum_incoming_usd'  => 0,
-                    'months_count'      => 0,
-                    'price'             => 0,
-                    'status'            => 'OPEN',
-                    'window_started_at' => $now,
-                    'window_ends_at'    => $windowEndsAt,
+            if (!$row) {
+                $row = DaysTransfer::create([
+                    'op_date'=>$opDate,
+                    'sender_number'=>$msisdn,
+                    'receiver_number'=>$msisdn,
+                    'provider'=>$provider,
+                    'amount_usd'=>0,
+                    'sum_incoming_usd'=>0,
+                    'months_count'=>0,
+                    'price'=>0,
+                    'status'=>'OPEN',
+                    'expected_vouchers'=>[],
+                    'expectation_rule'=>null,
                 ]);
             }
 
-            // تراكم
-            $session->sum_incoming_usd = bcadd((string)$session->sum_incoming_usd, (string)$amount, 2);
-            $session->save();
+            // راكم مجموع اليوم
+            $row->sum_incoming_usd = bcadd((string)$row->sum_incoming_usd,(string)$amount,2);
 
-            // أقفل بعد الإدخال أيضاً إن وُجد ما انتهى الآن
-            $this->closeExpiredSessions($ts);
+            // حوّل المجموع إلى (أشهر + كروت) وفق منطقك
+            [$months,$vouchers,$rule] = $this->decideForToday($provider,(float)$row->sum_incoming_usd);
+
+            $row->months_count = $months;
+            $row->price        = $this->priceOf($months);
+            $row->expected_vouchers = $vouchers;      // فقط توقع، لا خصم
+            $row->expectation_rule  = $rule;          // EXACT_* أو RANGE_*
+            $row->save();
+
+            return $row;
         });
     }
 
-    public function closeExpiredSessions(?Carbon $now = null, bool $force = false): int
+    // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
+    public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
     {
-        $now = $now ?: now();
-
-        $q = DaysTransfer::query()->where('status','OPEN');
-        if (!$force) {
-            $q->whereNotNull('window_ends_at')->where('window_ends_at','<=',$now);
-        }
-
-        $sessions = $q->orderBy('id')->get();
-        $count = 0;
-
-        foreach ($sessions as $s) {
-            DB::transaction(function () use ($s) {
-                $sum = (float) $s->sum_incoming_usd;
-
-                [$months, $rule] = $this->classifyMonths($sum);
-                $expected = $this->buildExpectedVouchers($s->provider, $months, $sum);
-
-                $pricing = Config::get('days_topup.pricing', []);
-                $price   = isset($pricing[$months]) ? (float)$pricing[$months] : 0.0;
-
-                // حدّث السجل
-                $s->months_count      = $months;
-                $s->price             = $price;
-                $s->expectation_rule  = $rule;
-                $s->expected_vouchers = $expected;
-                $s->status            = 'PENDING_RECON';
-                $s->save();
-
-                // تحديث الأرصدة
-                Balance::adjust($s->provider, +$sum);
-                Balance::adjust('my_balance', +$price);
-            });
-            $count++;
-        }
-        return $count;
+        return DB::transaction(function () use ($msisdn,$provider,$opDate) {
+            $row = DaysTransfer::lockForUpdate()
+                ->where(compact('msisdn')) // intentionally wrong; fixed below
+                ->first();
+        });
     }
 
-    private function classifyMonths(float $sum): array
+    // نسخة صحيحة:
+    public function finalizeDayCorrect(string $msisdn, string $provider, string $opDate): DaysTransfer
     {
-        if ($sum >= 3.00 && $sum <= 6.00) {
-            return [1, 'RANGE_1M'];
-        } elseif ($sum > 6.00 && $sum < 21.00) {
-            return [3, 'RANGE_3M'];
-        } elseif ($sum > 21.00 && $sum < 35.50) {
-            return [6, 'RANGE_6M'];
-        } else {
-            return [12, 'RANGE_12M'];
-        }
+        return DB::transaction(function () use ($msisdn,$provider,$opDate) {
+            $row = DaysTransfer::lockForUpdate()
+                ->where('receiver_number',$msisdn)
+                ->where('provider',$provider)
+                ->where('op_date',$opDate)
+                ->firstOrFail();
+
+            // أثر مالي: زد رصيد المزود بالمجموع، وزد my_balance بسعر البيع
+            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
+            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+
+            $row->status = 'PENDING_RECON'; // بانتظار تقرير wish فقط
+            $row->save();
+            return $row;
+        });
     }
 
-    private function buildExpectedVouchers(string $provider, int $months, float $sum): array
+    private function priceOf(int $months): float
     {
-        $map = Config::get("days_topup.vouchers.$provider", []);
-        $key = (string) $months;
-        if (!isset($map[$key])) return [];
+        $pricing = Config::get('days_topup.pricing',[]);
+        return (float)($pricing[$months] ?? 0);
+    }
 
-        $sumKey = number_format($sum, 2, '.', '');
-        return $map[$key][$sumKey] ?? [];
+    // قرار اليوم: أولوية للمبالغ المطابقة تمامًا، وإلا تصنيف عام
+    private function decideForToday(string $provider, float $sum): array
+    {
+        $sumKey = number_format($sum,2,'.','');
+        $exact = Config::get("days_topup.exact.$provider",[]);
+        if (isset($exact[$sumKey])) {
+            [$months,$vouchers] = $exact[$sumKey];
+            return [$months,$vouchers,"EXACT_$sumKey"];
+        }
+
+        foreach (Config::get('days_topup.ranges',[]) as $r) {
+            if ($sum >= $r['min'] && $sum <= $r['max']) {
+                return [$r['months'], [], $r['rule']]; // بدون كروت حتى يصير Exact
+            }
+        }
+        // أكبر من كل الحدود ⇒ 12 شهر (بدون كروت حتى يصير 73.00)
+        return [12, [], 'RANGE_12M'];
     }
 }
