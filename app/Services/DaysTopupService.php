@@ -16,9 +16,12 @@ class DaysTopupService
     public function addMsgByDate(string $msisdn, string $provider, float $amount, Carbon $ts): DaysTransfer
     {
         $allowed = Config::get('days_topup.allowed_msg_values', []);
-        if (!in_array($amount, $allowed, true)) {
+        $allowedKeys = array_map(fn($v)=> number_format((float)$v, 2, '.', ''), $allowed);
+        $amtKey = number_format((float)$amount, 2, '.', '');
+        if (!in_array($amtKey, $allowedKeys, true)) {
             throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
+
 
         $opDate = $ts->timezone(config('app.timezone'))->toDateString();
 
