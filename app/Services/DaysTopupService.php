@@ -109,6 +109,22 @@ class DaysTopupService
             return $row;
         });
     }
+    
+    public function finalizeAllForDate(string $provider, string $opDate): int
+    {
+        $rows = \App\Models\DaysTransfer::where('provider',$provider)
+            ->where('op_date',$opDate)
+            ->where('status','OPEN')
+            ->lockForUpdate()
+            ->get();
+
+        $n = 0;
+        foreach ($rows as $row) {
+            $this->finalizeDayCorrect($row->receiver_number, $provider, $opDate);
+            $n++;
+        }
+        return $n;
+    }
 
     private function priceOf(int $months): float
     {
@@ -118,38 +134,38 @@ class DaysTopupService
 
     // قرار اليوم: أولوية للمبالغ المطابقة تمامًا، وإلا تصنيف عام
     private function decideForToday(string $provider, float $sum): array
-{
-    $s = round($sum, 2);
+    {
+        $s = round($sum, 2);
 
-    // 1 شهر
-    if ($s > 0 && $s <= 3.50)                    return [1, [4.5], 'RANGE_1M_<=3.5', 3.50];
-    if ($s > 3.50 && $s <= 6.50)                 return [1, [7.58], 'RANGE_1M_>3.5_<=6.5', 6.50];
+        // 1 شهر
+        if ($s > 0 && $s <= 3.50)                    return [1, [4.5], 'RANGE_1M_<=3.5', 3.50];
+        if ($s > 3.50 && $s <= 6.50)                 return [1, [7.58], 'RANGE_1M_>3.5_<=6.5', 6.50];
 
-    if ($provider === 'alfa') {
-        // 3 أشهر (alfa)
-        if ($s > 6.50 && $s <= 18.00)            return [3, [4.5,7.58,7.58], 'RANGE_3M_ALFA_>6.5_<=18', 18.00];
-        if ($s > 18.00 && $s <= 21.00)           return [3, [7.58,7.58,7.58], 'RANGE_3M_ALFA_>18_<=21', 21.00];
-        // 6 أشهر (alfa)
-        if ($s > 21.00 && $s <= 32.50)           return [6, [4.5,7.58,7.58,7.58,7.58], 'RANGE_6M_ALFA_>21_<=32.5', 32.50];
-        if ($s > 32.50 && $s <= 35.50)           return [6, [7.58,7.58,7.58,7.58,7.58], 'RANGE_6M_ALFA_>32.5_<=35.5', 35.50];
-    } else { // mtc
-        // 3 أشهر (mtc)
-        if ($s > 6.50 && $s <= 21.00)            return [3, [22.73], 'RANGE_3M_MTC_>6.5_<=21', 21.00];
-        // 6 أشهر (mtc)
-        if ($s > 21.00 && $s <= 42.00)           return [6, [22.73,22.73], 'RANGE_6M_MTC_>21_<=42', 42];
+        if ($provider === 'alfa') {
+            // 3 أشهر (alfa)
+            if ($s > 6.50 && $s <= 18.00)            return [3, [4.5,7.58,7.58], 'RANGE_3M_ALFA_>6.5_<=18', 18.00];
+            if ($s > 18.00 && $s <= 21.00)           return [3, [7.58,7.58,7.58], 'RANGE_3M_ALFA_>18_<=21', 21.00];
+            // 6 أشهر (alfa)
+            if ($s > 21.00 && $s <= 32.50)           return [6, [4.5,7.58,7.58,7.58,7.58], 'RANGE_6M_ALFA_>21_<=32.5', 32.50];
+            if ($s > 32.50 && $s <= 35.50)           return [6, [7.58,7.58,7.58,7.58,7.58], 'RANGE_6M_ALFA_>32.5_<=35.5', 35.50];
+        } else { // mtc
+            // 3 أشهر (mtc)
+            if ($s > 6.50 && $s <= 21.00)            return [3, [22.73], 'RANGE_3M_MTC_>6.5_<=21', 21.00];
+            // 6 أشهر (mtc)
+            if ($s > 21.00 && $s <= 42.00)           return [6, [22.73,22.73], 'RANGE_6M_MTC_>21_<=42', 42];
+        }
+
+        // 12 شهر
+        if ($s > 35.50 && $s <= 73.00)               return [12, [77.28], 'RANGE_12M_>35.5_<=73', 73.00];
+
+        // فُل باك بدون كروت + سقف الرينج الأقرب
+        if     ($s >= 3.00  && $s <= 6.00)           return [1,  [], 'FALLBACK_1M', 6.00];
+        elseif ($s > 6.00   && $s < 21.00)           return [3,  [], 'FALLBACK_3M', 21.00];
+        elseif ($s > 21.00  && $s < 35.50)           return [6,  [], 'FALLBACK_6M', 35.50];
+        elseif ($s >= 35.50 && $s < 73.00)           return [12, [], 'FALLBACK_12M', 73.00];
+
+        return [0, [], 'OUT_OF_RANGE', 0.00];
     }
-
-    // 12 شهر
-    if ($s > 35.50 && $s <= 73.00)               return [12, [77.28], 'RANGE_12M_>35.5_<=73', 73.00];
-
-    // فُل باك بدون كروت + سقف الرينج الأقرب
-    if     ($s >= 3.00  && $s <= 6.00)           return [1,  [], 'FALLBACK_1M', 6.00];
-    elseif ($s > 6.00   && $s < 21.00)           return [3,  [], 'FALLBACK_3M', 21.00];
-    elseif ($s > 21.00  && $s < 35.50)           return [6,  [], 'FALLBACK_6M', 35.50];
-    elseif ($s >= 35.50 && $s < 73.00)           return [12, [], 'FALLBACK_12M', 73.00];
-
-    return [0, [], 'OUT_OF_RANGE', 0.00];
-}
 
 
 
