@@ -67,7 +67,6 @@ class DaysTopupService
             $sumNow = (float)$row->sum_incoming_usd;
             $remain = max(0, round($cap - $sumNow, 2));
 
-// خاص: إذا المجموع = 3.00 أو 6.00 خلّي المتبقي صفر
             $sumKey = number_format($sumNow, 2, '.', '');
             if (in_array($sumKey, ['3.00','6.00'], true)) {
                 $remain = 0.00;
@@ -137,7 +136,7 @@ class DaysTopupService
         // 3 أشهر (mtc)
         if ($s > 6.50 && $s <= 21.00)            return [3, [22.73], 'RANGE_3M_MTC_>6.5_<=21', 21.00];
         // 6 أشهر (mtc)
-        if ($s > 21.00 && $s <= 35.50)           return [6, [22.73,22.73], 'RANGE_6M_MTC_>21_<=35.5', 35.50];
+        if ($s > 21.00 && $s <= 42.00)           return [6, [22.73,22.73], 'RANGE_6M_MTC_>21_<=42', 42];
     }
 
     // 12 شهر
