@@ -6,17 +6,9 @@ use App\Http\Controllers\Api\UsdTransferController;
 use App\Http\Controllers\Api\UsdSmsHookController;
 use App\Http\Controllers\Api\InternetTransferController;
 use App\Http\Controllers\Api\WishBatchController;
-// routes/api.php
-Route::get('/health', fn() => response()->json(['ok'=>true]));
-// routes/api.php
-Route::post('/days/close-sessions', function (\Illuminate\Http\Request $r, \App\Services\DaysTopupService $svc) {
-    abort_unless($r->header('X-Admin-Token') === config('app.days_admin_token', env('DAYS_ADMIN_TOKEN')), 403);
-    $n = $svc->closeExpiredSessions();
-    return response()->json(['closed'=>$n]);
-});
+use App\Http\Controllers\Api\DaysUsdController;
 
-Route::post('/days/usd-ingest', [\App\Http\Controllers\Api\DaysUsdController::class, 'ingest']);
-
+Route::post('/days/usd-ingest', [DaysUsdController::class, 'ingest']);
 
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);       // إنشاء طلب من الفرونت (Pending)
 Route::post('/hooks/usd-sms',  [UsdSmsHookController::class, 'store']);
