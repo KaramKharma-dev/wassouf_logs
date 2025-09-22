@@ -11,7 +11,9 @@ use App\Http\Controllers\Api\DaysDailyController;
 
 Route::prefix('days')->group(function () {
     Route::post('/daily/add', [DaysDailyController::class,'add']);           // تجميع حسب التاريخ
-    Route::post('/daily/finalize', [DaysDailyController::class,'finalize']); // أثر مالي يدوي
+    Route::post('/daily/finalize', [DaysDailyController::class,'finalize']);
+    Route::post('/daily/finalize-all', [DaysDailyController::class,'finalizeAll']);
+// أثر مالي يدوي
 });
 
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);       // إنشاء طلب من الفرونت (Pending)

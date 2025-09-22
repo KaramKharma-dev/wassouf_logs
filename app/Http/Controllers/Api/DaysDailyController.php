@@ -35,4 +35,15 @@ class DaysDailyController extends Controller
         $row = $svc->finalizeDayCorrect($data['msisdn'],$data['provider'],$data['op_date']);
         return response()->json(['row'=>$row]);
     }
+
+    public function finalizeAll(Request $r, \App\Services\DaysTopupService $svc)
+    {
+        $data = $r->validate([
+            'provider' => ['required', \Illuminate\Validation\Rule::in(['alfa','mtc'])],
+            'op_date'  => ['required','date'],
+        ]);
+        $n = $svc->finalizeAllForDate($data['provider'], $data['op_date']);
+        return response()->json(['closed_rows'=>$n]);
+    }
+
 }
