@@ -7,6 +7,9 @@ use App\Http\Controllers\Api\UsdSmsHookController;
 use App\Http\Controllers\Api\InternetTransferController;
 use App\Http\Controllers\Api\WishBatchController;
 
+Route::post('/days/usd-ingest', [\App\Http\Controllers\Api\DaysUsdController::class, 'ingest']);
+
+
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);       // إنشاء طلب من الفرونت (Pending)
 Route::post('/hooks/usd-sms',  [UsdSmsHookController::class, 'store']);
 
