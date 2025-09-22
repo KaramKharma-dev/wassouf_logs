@@ -55,21 +55,20 @@ class DaysTopupService
                 ]);
             }
 
-            // راكم مجموع اليوم
-            $row->sum_incoming_usd = bcadd((string)$row->sum_incoming_usd,(string)$amount,2);
+            $row->sum_incoming_usd = bcadd((string)$row->sum_incoming_usd, (string)$amount, 2);
 
-            // حوّل المجموع إلى (أشهر + كروت) وفق منطقك
             [$months, $vouchers, $rule, $cap] = $this->decideForToday($provider, (float)$row->sum_incoming_usd);
+
             $row->months_count      = $months;
             $row->price             = $this->priceOf($months);
             $row->expected_vouchers = $vouchers;
             $row->expectation_rule  = $rule;
 
-            // المتبقي للوصول إلى سقف الرينج الحالي
             $remain = max(0, round($cap - (float)$row->sum_incoming_usd, 2));
             $row->amount_usd = number_format($remain, 2, '.', '');
 
             $row->save();
+            return $row;
 
         });
     }
