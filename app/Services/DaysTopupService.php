@@ -64,14 +64,22 @@ class DaysTopupService
             $row->expected_vouchers = $vouchers;
             $row->expectation_rule  = $rule;
 
-            $remain = max(0, round($cap - (float)$row->sum_incoming_usd, 2));
+            $sumNow = (float)$row->sum_incoming_usd;
+            $remain = max(0, round($cap - $sumNow, 2));
+
+// خاص: إذا المجموع = 3.00 أو 6.00 خلّي المتبقي صفر
+            $sumKey = number_format($sumNow, 2, '.', '');
+            if (in_array($sumKey, ['3.00','6.00'], true)) {
+                $remain = 0.00;
+            }
+
             $row->amount_usd = number_format($remain, 2, '.', '');
 
-            $row->save();
-            return $row;
+                        $row->save();
+                        return $row;
 
-        });
-    }
+                    });
+                }
 
     // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
     public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
