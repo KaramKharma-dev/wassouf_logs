@@ -19,31 +19,38 @@ class WishRawAltProcessController extends Controller
         $data = $r->validate(['date' => ['required','date']]);
         $targetDate = Carbon::parse($data['date'])->toDateString();
 
+        // 1) كل السطور VALID بهذا التاريخ = eligible
         $eligible = DB::table('wish_rows_alt')
             ->whereDate('op_date', $targetDate)
             ->where('row_status', 'VALID')
-            ->whereRaw('UPPER(TRIM(service)) = ?', ['TOPUP'])
-            ->whereNull('debit')
-            ->whereNotNull('credit')
             ->count();
 
         $processed = 0; $skipped = 0;
 
-        // نقرأ دفعات لتفادي استهلاك الذاكرة
+        // 2) امشِ على كل VALID، وقرّر داخل الحلقة
         DB::table('wish_rows_alt')
             ->whereDate('op_date', $targetDate)
             ->where('row_status', 'VALID')
-            ->whereRaw('UPPER(TRIM(service)) = ?', ['TOPUP'])
-            ->whereNull('debit')
-            ->whereNotNull('credit')
             ->orderBy('id')
             ->chunkById(200, function ($rows) use (&$processed, &$skipped) {
 
                 foreach ($rows as $row) {
-                    $credit = (float)$row->credit;
+                    $service = strtoupper(trim($row->service ?? ''));
+                    $debit   = $row->debit  !== null ? (float)$row->debit  : null;
+                    $credit  = $row->credit !== null ? (float)$row->credit : null;
 
+                    // الشرط الوحيد المطلوب حاليًا
+                    $isTopupCreditOnly = ($service === 'TOPUP' && $debit === null && $credit !== null);
+
+                    if (!$isTopupCreditOnly) {
+                        // لم تتم المعالجة
+                        $skipped++;
+                        continue;
+                    }
+
+                    // معالجة السطر
                     DB::transaction(function () use ($row, $credit, &$processed, &$skipped) {
-                        // قفل رصيد mb_wish_lb
+                        // قفل رصيد LBP
                         DB::table('balances')
                             ->where('provider', 'mb_wish_lb')
                             ->lockForUpdate()
@@ -53,16 +60,16 @@ class WishRawAltProcessController extends Controller
                         $affected = DB::table('balances')
                             ->where('provider', 'mb_wish_lb')
                             ->update([
-                                'balance' => DB::raw('balance + '.sprintf('%.2f', $credit))
+                                'balance' => DB::raw('balance + '.sprintf('%.2f', (float)$credit))
                             ]);
 
                         if ($affected < 1) {
-                            // لا يوجد رصيد بهذا المزوّد
+                            // لا يوجد صف رصيد للمزوّد
                             $skipped++;
                             return;
                         }
 
-                        // تعليم السطر كمُعالج
+                        // تعليم السطر كـ INVALID (حسب طلبك)
                         DB::table('wish_rows_alt')
                             ->where('id', $row->id)
                             ->update([
@@ -70,11 +77,9 @@ class WishRawAltProcessController extends Controller
                                 'updated_at' => now(),
                             ]);
 
-
                         $processed++;
                     });
                 }
-
             });
 
         return redirect()
