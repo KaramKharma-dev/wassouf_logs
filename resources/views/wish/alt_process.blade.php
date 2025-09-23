@@ -17,10 +17,17 @@
   .alert{border-radius:12px;padding:10px 12px;margin-bottom:10px}
   .alert.ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.35)}
   .alert.err{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35)}
+  .uploader{border:1.5px dashed #334099;border-radius:14px;padding:16px;text-align:center;background:#0e1330}
+  .uploader.drag{background:#0d132e;border-color:#4f7cff}
+  .file-name{font-size:13px;color:#c9d3ff;margin-top:8px;word-break:break-all}
+  .progress{height:10px;background:#0b1030;border-radius:999px;margin-top:10px;overflow:hidden;border:1px solid #2a3470}
+  .bar{height:100%;width:0%;background:linear-gradient(90deg,#4f7cff,#7aa2ff)}
+  pre{white-space:pre-wrap;background:#0b1030;border:1px solid #2a3470;border-radius:12px;padding:10px;color:#cfe1ff;max-height:300px;overflow:auto}
   @media (max-width:980px){.wrap{grid-template-columns:1fr}}
 </style>
 
 <div class="wrap">
+  <!-- بطاقة المعالجة -->
   <div class="card" dir="rtl">
     @if(session('status'))
       <div class="alert ok">{{ session('status') }}</div>
@@ -50,13 +57,119 @@
     </p>
   </div>
 
+  <!-- بطاقة رفع كشف Wish (LBP) -->
   <div class="card" dir="rtl">
-    <h3 class="h">ملاحظات سريعة</h3>
-    <ul class="muted" style="margin:0;padding-inline-start:18px">
-      <li>تأكد أن جدول <code>wish_rows_alt</code> يحوي الأعمدة: <code>op_date, row_status, service, debit, credit</code>.</li>
-      <li>تأكد أن <code>balances</code> يحوي صفاً بمزوّد <code>mb_wish_lb</code>.</li>
-      <li>إن لم تكن قيمة <code>PROCESSED</code> موجودة في <code>row_status</code> أضفها في migration أو بدّلها إلى <code>INVALID</code>.</li>
-    </ul>
+    <h3 class="h">رفع كشف Wish (LBP) — Excel</h3>
+    <p class="muted">يرسل إلى <code>/api/wish/lbp/batches</code> بهيدر <code>Accept: application/json</code>.</p>
+
+    <div id="drop" class="uploader" tabindex="0">
+      <div>اسحب الملف إلى هنا أو</div>
+      <div style="margin-top:8px">
+        <button id="pick" type="button" class="btn secondary">اختر ملف</button>
+      </div>
+      <div id="fname" class="file-name" style="display:none"></div>
+
+      <div class="progress" style="display:none" id="pwrap"><div class="bar" id="pbar"></div></div>
+      <div id="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button id="send" class="btn full" disabled>رفع الملف الآن</button>
+    </div>
+
+    <input id="file" type="file" accept=".xlsx,.xls" style="display:none">
   </div>
 </div>
+
+<script>
+(function(){
+  const apiUrl = "/api/wish/lbp/batches";
+
+  const drop = document.getElementById('drop');
+  const pick = document.getElementById('pick');
+  const fileInput = document.getElementById('file');
+  const sendBtn = document.getElementById('send');
+  const fname = document.getElementById('fname');
+  const pwrap = document.getElementById('pwrap');
+  const pbar  = document.getElementById('pbar');
+  const msg   = document.getElementById('msg');
+
+  let theFile = null;
+
+  function setFile(f){
+    theFile = f || null;
+    if (theFile){
+      fname.style.display = 'block';
+      fname.textContent = theFile.name + " (" + Math.round(theFile.size/1024) + " KB)";
+      sendBtn.disabled = false;
+      msg.innerHTML = "";
+    } else {
+      fname.style.display = 'none';
+      sendBtn.disabled = true;
+    }
+  }
+
+  pick.addEventListener('click', ()=> fileInput.click());
+  fileInput.addEventListener('change', (e)=> setFile(e.target.files[0]));
+
+  ['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.add('drag');
+  }));
+  ['dragleave','drop'].forEach(ev=> drop.addEventListener(ev, e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.remove('drag');
+  }));
+  drop.addEventListener('drop', e=>{
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    setFile(f);
+  });
+
+  sendBtn.addEventListener('click', function(){
+    if(!theFile){ return; }
+    msg.innerHTML = "";
+    pwrap.style.display = 'block';
+    pbar.style.width = '0%';
+    sendBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('file', theFile);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', apiUrl, true);
+    xhr.setRequestHeader('Accept','application/json');
+
+    xhr.upload.onprogress = function(e){
+      if(e.lengthComputable){
+        const pct = Math.round((e.loaded / e.total) * 100);
+        pbar.style.width = pct + '%';
+      }
+    };
+
+    xhr.onreadystatechange = function(){
+      if(xhr.readyState === 4){
+        sendBtn.disabled = false;
+
+        let body = xhr.responseText;
+        try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
+
+        if(xhr.status >= 200 && xhr.status < 300){
+          msg.innerHTML = '<div class="alert ok">تم الرفع بنجاح</div><pre>'+escapeHtml(body)+'</pre>';
+        } else {
+          msg.innerHTML = '<div class="alert err">فشل الرفع ('+xhr.status+')</div><pre>'+escapeHtml(body)+'</pre>';
+        }
+      }
+    };
+
+    xhr.onerror = function(){
+      sendBtn.disabled = false;
+      msg.innerHTML = '<div class="alert err">خطأ شبكة أثناء الرفع</div>';
+    };
+
+    xhr.send(fd);
+  });
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#039;' }[m]));
+  }
+})();
+</script>
 @endsection
