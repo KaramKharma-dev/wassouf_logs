@@ -13,72 +13,71 @@ use Illuminate\Validation\ValidationException;
 class DaysTopupService
 {
     // إضافة رسالة وتحديث سطر اليوم لنفس الرقم+المزوّد (بدون خصم Wish)
-    public function addMsgByDate(string $msisdn, string $provider, float $amount, Carbon $ts): DaysTransfer
+    public function addMsgByDate(string $msisdn, string $receiver, string $provider, float $amount, Carbon $ts): DaysTransfer
     {
         $allowed = Config::get('days_topup.allowed_msg_values', []);
         $allowedKeys = array_map(fn($v)=> number_format((float)$v, 2, '.', ''), $allowed);
         $amtKey = number_format((float)$amount, 2, '.', '');
         if (!in_array($amtKey, $allowedKeys, true)) {
-            throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
+            throw \Illuminate\Validation\ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
-
 
         $opDate = $ts->timezone(config('app.timezone'))->toDateString();
 
-        return DB::transaction(function () use ($msisdn,$provider,$amount,$ts,$opDate) {
-            // خزن الرسالة الخام
+        return DB::transaction(function () use ($msisdn,$receiver,$provider,$amount,$ts,$opDate) {
+            // خزّن الرسالة
             UsdInMsg::create([
-                'msisdn'=>$msisdn, 'provider'=>$provider,
-                'amount'=>$amount, 'received_at'=>$ts,
+                'msisdn'          => $msisdn,
+                'receiver_number' => $receiver,   // جديد
+                'provider'        => $provider,
+                'amount'          => $amount,
+                'received_at'     => $ts,
             ]);
 
-            // سطر اليوم
+            // سطر اليوم حسب receiver_number
             $row = DaysTransfer::lockForUpdate()
-                ->where('receiver_number',$msisdn)
+                ->where('receiver_number',$receiver)
                 ->where('provider',$provider)
                 ->where('op_date',$opDate)
                 ->first();
 
             if (!$row) {
                 $row = DaysTransfer::create([
-                    'op_date'=>$opDate,
-                    'sender_number'=>$msisdn,
-                    'receiver_number'=>$msisdn,
-                    'provider'=>$provider,
-                    'amount_usd'=>0,
-                    'sum_incoming_usd'=>0,
-                    'months_count'=>0,
-                    'price'=>0,
-                    'status'=>'OPEN',
-                    'expected_vouchers'=>[],
-                    'expectation_rule'=>null,
+                    'op_date'           => $opDate,
+                    'sender_number'     => $msisdn,
+                    'receiver_number'   => $receiver,
+                    'provider'          => $provider,
+                    'amount_usd'        => 0,
+                    'sum_incoming_usd'  => 0,
+                    'months_count'      => 0,
+                    'price'             => 0,
+                    'status'            => 'OPEN',
+                    'expected_vouchers' => [],
+                    'expectation_rule'  => null,
                 ]);
             }
 
+            // التراكم والحسابات
             $row->sum_incoming_usd = bcadd((string)$row->sum_incoming_usd, (string)$amount, 2);
 
             [$months, $vouchers, $rule, $cap] = $this->decideForToday($provider, (float)$row->sum_incoming_usd);
-
             $row->months_count      = $months;
             $row->price             = $this->priceOf($months);
             $row->expected_vouchers = $vouchers;
             $row->expectation_rule  = $rule;
 
-            $sumNow = (float)$row->sum_incoming_usd;
-            $remain = max(0, round($cap - $sumNow, 2));
-
-            $sumKey = number_format($sumNow, 2, '.', '');
+            $sumNow  = (float)$row->sum_incoming_usd;
+            $remain  = max(0, round($cap - $sumNow, 2));
+            $sumKey  = number_format($sumNow, 2, '.', '');
             if (in_array($sumKey, ['3.00','6.00'], true)) {
-                $remain = 0.00;
+                $remain = 0.00; // شرطك الخاص
             }
-
             $row->amount_usd = number_format($remain, 2, '.', '');
 
-                        $row->save();
-                        return $row;
-
-                    });
-                }
+            $row->save();
+            return $row;
+        });
+    }
 
     // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
     public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
@@ -91,25 +90,25 @@ class DaysTopupService
     }
 
     // نسخة صحيحة:
-    public function finalizeDayCorrect(string $msisdn, string $provider, string $opDate): DaysTransfer
+    public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
     {
-        return DB::transaction(function () use ($msisdn,$provider,$opDate) {
+        return DB::transaction(function () use ($receiver,$provider,$opDate) {
             $row = DaysTransfer::lockForUpdate()
-                ->where('receiver_number',$msisdn)
+                ->where('receiver_number',$receiver)
                 ->where('provider',$provider)
                 ->where('op_date',$opDate)
                 ->firstOrFail();
 
-            // أثر مالي: زد رصيد المزود بالمجموع، وزد my_balance بسعر البيع
-            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
-            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+            \App\Models\Balance::adjust($provider, +(float)$row->sum_incoming_usd);
+            \App\Models\Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
 
-            $row->status = 'PENDING_RECON'; // بانتظار تقرير wish فقط
+            $row->status = 'PENDING_RECON'; // أو RECONCILED لو بدك إغلاق نهائي
             $row->save();
             return $row;
         });
     }
-    
+
+
     public function finalizeAllForDate(string $provider, string $opDate): int
     {
         $rows = \App\Models\DaysTransfer::where('provider',$provider)
