@@ -10,10 +10,10 @@ use App\Http\Controllers\Api\WishBatchController;
 use App\Http\Controllers\Api\DaysDailyController;
 
 Route::prefix('days')->group(function () {
-    Route::post('/daily/add', [DaysDailyController::class,'add']);           // تجميع حسب التاريخ
-    Route::post('/daily/finalize', [DaysDailyController::class,'finalize']);
-    Route::post('/daily/finalize-all', [DaysDailyController::class,'finalizeAll']);
-// أثر مالي يدوي
+    Route::post('/daily/add',        [\App\Http\Controllers\Api\DaysDailyController::class, 'add']);        // إدخال يدوي
+    Route::post('/daily/ingest-sms', [\App\Http\Controllers\Api\DaysDailyController::class, 'ingestSms']);   // إدخال من SMS
+    Route::post('/daily/finalize',   [\App\Http\Controllers\Api\DaysDailyController::class, 'finalize']);
+    Route::post('/daily/finalize-all', [\App\Http\Controllers\Api\DaysDailyController::class, 'finalizeAll']);
 });
 
 Route::post('/usd-transfers', [UsdTransferController::class, 'store']);       // إنشاء طلب من الفرونت (Pending)

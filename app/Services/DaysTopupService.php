@@ -78,6 +78,51 @@ class DaysTopupService
             return $row;
         });
     }
+    public function ingestSms(string $provider, string $msg, string $receiver, Carbon $ts): DaysTransfer
+    {
+        [$msisdn, $amount] = $this->parseSms($provider, $msg);
+
+        $allowed = Config::get('days_topup.allowed_msg_values', []);
+        $allowedKeys = array_map(fn($v)=> number_format((float)$v, 2, '.', ''), $allowed);
+        $amtKey = number_format((float)$amount, 2, '.', '');
+        if (!in_array($amtKey, $allowedKeys, true)) {
+            throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
+        }
+
+        return $this->addMsgByDate($msisdn, $receiver, $provider, (float)$amount, $ts);
+    }
+
+    private function parseSms(string $provider, string $msg): array
+    {
+        // amount: "USD 3.0" أو "$3.0"
+        $amount = null;
+        if (preg_match('/(?:USD|\$)\s*([0-9]+(?:\.[0-9]+)?)/i', $msg, $m)) {
+            $amount = (float)$m[1];
+        } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*(?:USD|\$)/i', $msg, $m)) {
+            $amount = (float)$m[1];
+        }
+
+        // msisdn: بعد "mobile number" أو أي +961########
+        $msisdn = null;
+        if (preg_match('/mobile\s+number\s+(?:\+?961)?\s?(\d{8})/i', $msg, $m2)) {
+            $msisdn = $this->normalizeMsisdn($m2[1]);
+        } elseif (preg_match('/(?:\+?961)(\d{8})/', $msg, $m3)) {
+            $msisdn = $this->normalizeMsisdn($m3[0]);
+        }
+
+        if ($msisdn === null || $amount === null) {
+            throw ValidationException::withMessages(['msg'=>'غير قادر على استخراج الرقم أو المبلغ من الرسالة']);
+        }
+        return [$msisdn, $amount];
+    }
+
+    private function normalizeMsisdn(string $raw): string
+    {
+        $digits = preg_replace('/\D+/', '', $raw);
+        if (str_starts_with($digits, '961') && strlen($digits) >= 11) return substr($digits, -8);
+        if (strlen($digits) >= 8) return substr($digits, -8);
+        return $digits;
+    }
 
     // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
     public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
