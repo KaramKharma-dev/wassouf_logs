@@ -66,9 +66,10 @@ class WishRawAltProcessController extends Controller
                         DB::table('wish_rows_alt')
                             ->where('id', $row->id)
                             ->update([
-                                'row_status' => 'PROCESSED',
+                                'row_status' => 'INVALID',
                                 'updated_at' => now(),
                             ]);
+
 
                         $processed++;
                     });
