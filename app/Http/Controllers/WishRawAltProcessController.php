@@ -71,6 +71,10 @@ class WishRawAltProcessController extends Controller
                     // جديد: QR COLLECT مع debit فقط
                     $isQrCollect         = ($service === 'QR COLLECT' && $debit !== null && $debit > 0 && $credit === null);
 
+                    // جديد: IDM DIRECT حالتان
+                    $isIdmDebitOnly      = ($service === 'IDM DIRECT' && $debit !== null && $debit > 0 && $credit === null);
+                    $isIdmCreditOnly     = ($service === 'IDM DIRECT' && $debit === null && $credit !== null && $credit > 0);
+
                     // 2) خصم ليرة فقط عند debit-only
                     $isDebitOnly         = in_array($service, $debitOnlyServices, true)
                                            && $debit !== null && $debit > 0 && $credit === null;
@@ -79,14 +83,14 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps         = in_array($service, ['ALFA','TOUCH'], true)
                                            && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isOgeroCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isOgeroCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isIdmDebitOnly || $isIdmCreditOnly || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
                         $row,$service,$desc,$debit,$credit,
-                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isOgeroCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isDebitOnly,$isDirectOps,
+                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isOgeroCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isIdmDebitOnly,$isIdmCreditOnly,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
                         // اقفل رصيد الليرة
@@ -132,6 +136,44 @@ class WishRawAltProcessController extends Controller
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
+                        }
+
+                        // جديد: IDM DIRECT (debit-only) ⇒ خصم ليرة + إضافة (debit/89000) USD
+                        if ($isIdmDebitOnly) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            $usd = round(((float)$debit) / 89000, 4);
+                            DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                            DB::table('balances')->where('provider','my_balance')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.4f', $usd)),
+                                'updated_at' => now(),
+                            ]);
+
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
+                        }
+
+                        // جديد: IDM DIRECT (credit-only) ⇒ زيادة ليرة + خصم (credit/89000) من my_balance
+                        if ($isIdmCreditOnly) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            $usd = round(((float)$credit) / 89000, 4);
+                            DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                            DB::table('balances')->where('provider','my_balance')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.4f', $usd)),
+                                'updated_at' => now(),
+                            ]);
+
                             DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
                             $processed++; return;
                         }
