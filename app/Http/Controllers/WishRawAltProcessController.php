@@ -19,7 +19,6 @@ class WishRawAltProcessController extends Controller
         $data = $r->validate(['date' => ['required','date']]);
         $targetDate = Carbon::parse($data['date'])->toDateString();
 
-        // إحصاء السطور القابلة للمعالجة
         $eligible = DB::table('wish_rows_alt')
             ->whereDate('op_date', $targetDate)
             ->where('row_status', 'VALID')
@@ -33,13 +32,11 @@ class WishRawAltProcessController extends Controller
             ->orderBy('id')
             ->chunkById(200, function ($rows) use (&$processed, &$skipped, $targetDate) {
 
-                // تسعيرة تحويل الكرت إلى ربح (my_balance)
                 $priceMap = [
                     '1.67'=>2.247,'3.03'=>3.932,'3.79'=>4.72,'4.50'=>5.61,
                     '7.58'=>9.00,'10.00'=>12.36,'15.15'=>18.00,'22.73'=>27.00,'77.28'=>90.00,
                 ];
 
-                // خدمات خصم ليرة فقط
                 $debitOnlyServices = [
                     'ALFA BILLS','TOUCH BILLS',
                     'TERRANET','OGERO BILLS','W2W','SODETEL DIRECT',
@@ -51,27 +48,30 @@ class WishRawAltProcessController extends Controller
                     $debit   = $row->debit  !== null ? round((float)$row->debit,  2) : null;
                     $credit  = $row->credit !== null ? round((float)$row->credit, 2) : null;
 
-                    // 1) TOPUP: زيادة mb_wish_lb عند credit فقط
+                    // 1) TOPUP: زيادة عند credit فقط
                     $isTopupCreditOnly = ($service === 'TOPUP' && $debit === null && $credit !== null);
+
+                    // 1-bis) ALFA/TOUCH: زيادة عند credit فقط (الجديد)
+                    $isDirectCreditOnly = (in_array($service, ['ALFA','TOUCH'], true) && $debit === null && $credit !== null);
 
                     // 2) خصم ليرة فقط (debit-only)
                     $isDebitOnly = in_array($service, $debitOnlyServices, true)
                                    && $debit !== null && $debit > 0 && $credit === null;
 
-                    // 3) عمليات مباشرة: ALFA / TOUCH (سطر = كرت واحد من الوصف)
+                    // 3) ALFA/TOUCH مع debit: سطر = كرت واحد من الوصف
                     $isDirectOps = in_array($service, ['ALFA','TOUCH'], true)
                                    && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
-                        $row,$service,$desc,$debit,$credit,$isTopupCreditOnly,$isDebitOnly,$isDirectOps,
+                        $row,$service,$desc,$debit,$credit,$isTopupCreditOnly,$isDirectCreditOnly,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
-                        // قفل رصيد الليرة
+                        // اقفل رصيد الليرة
                         DB::table('balances')->where('provider','mb_wish_lb')->lockForUpdate()->get();
 
                         // TOPUP ⇒ زيادة
@@ -89,7 +89,22 @@ class WishRawAltProcessController extends Controller
                             return;
                         }
 
-                        // خصم ليرة فقط (ALFA BILLS / TOUCH BILLS / TERRANET / OGERO BILLS / W2W / SODETEL DIRECT)
+                        // ALFA/TOUCH credit-only ⇒ زيادة (الجديد)
+                        if ($isDirectCreditOnly) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update([
+                                'row_status'=>'INVALID','updated_at'=>now(),
+                            ]);
+                            $processed++;
+                            return;
+                        }
+
+                        // خصم ليرة فقط
                         if ($isDebitOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
@@ -104,7 +119,7 @@ class WishRawAltProcessController extends Controller
                             return;
                         }
 
-                        // ALFA / TOUCH: خصم debit ثم محاولة تسوية الكرت مع days_transfers
+                        // ALFA / TOUCH مع debit: خصم ثم محاولة تسوية الكرت مع days_transfers
                         $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                             'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
                             'updated_at' => now(),
@@ -119,10 +134,10 @@ class WishRawAltProcessController extends Controller
                             $processed++;
                             return;
                         }
-                        $voucherVal = number_format((float)$m[1], 2, '.', ''); // "4.50" أو "7.58"...
+                        $voucherVal = number_format((float)$m[1], 2, '.', '');
                         $provider   = ($service === 'ALFA') ? 'alfa' : 'mtc';
 
-                        // جلب سطور days_transfers لذات اليوم والمزوّد
+                        // سطور اليوم والمزوّد
                         $dayRows = DB::table('days_transfers')
                             ->whereDate('op_date', $targetDate)
                             ->where('provider', $provider)
@@ -131,7 +146,7 @@ class WishRawAltProcessController extends Controller
                             ->lockForUpdate()
                             ->get(['id','expected_vouchers','status']);
 
-                        // حاول حذف نسخة واحدة مطابقة من expected_vouchers
+                        // حذف نسخة واحدة مطابقة
                         $settled = false;
                         foreach ($dayRows as $drow) {
                             $exp = $drow->expected_vouchers ? json_decode($drow->expected_vouchers, true) : [];
@@ -142,7 +157,7 @@ class WishRawAltProcessController extends Controller
                             foreach ($exp as $ev) {
                                 $k = number_format((float)$ev, 2, '.', '');
                                 if (!$removedOnce && $k === $voucherVal) {
-                                    $removedOnce = true; // استهلك كرت واحد
+                                    $removedOnce = true;
                                     continue;
                                 }
                                 $new[] = (float)$k;
@@ -161,7 +176,7 @@ class WishRawAltProcessController extends Controller
                             }
                         }
 
-                        // إن لم تتم التسوية، أضِف ربح الكرت إلى my_balance
+                        // إن لم تُسوَّ، أضِف ربح الكرت إلى my_balance
                         if (!$settled && isset($priceMap[$voucherVal])) {
                             DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
                             DB::table('balances')->where('provider','my_balance')->update([
@@ -170,7 +185,7 @@ class WishRawAltProcessController extends Controller
                             ]);
                         }
 
-                        // علّم سطر wish كمنتهٍ
+                        // إنهاء سطر wish
                         DB::table('wish_rows_alt')->where('id',$row->id)->update([
                             'row_status'=>'INVALID','updated_at'=>now(),
                         ]);
