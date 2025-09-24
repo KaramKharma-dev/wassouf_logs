@@ -48,13 +48,16 @@ class WishRawAltProcessController extends Controller
                     $debit   = $row->debit  !== null ? round((float)$row->debit,  2) : null;
                     $credit  = $row->credit !== null ? round((float)$row->credit, 2) : null;
 
-                    // 1) TOPUP: زيادة عند credit فقط
+                    // 1) TOPUP: credit-only → زيادة ليرة
                     $isTopupCreditOnly = ($service === 'TOPUP' && $debit === null && $credit !== null);
 
-                    // 1-bis) ALFA/TOUCH: زيادة عند credit فقط (الجديد)
+                    // 1-bis) ALFA/TOUCH: credit-only → زيادة ليرة
                     $isDirectCreditOnly = (in_array($service, ['ALFA','TOUCH'], true) && $debit === null && $credit !== null);
 
-                    // 2) خصم ليرة فقط (debit-only)
+                    // 1-ter) W2W: credit-only → زيادة ليرة (الجديد)
+                    $isW2wCreditOnly = ($service === 'W2W' && $debit === null && $credit !== null);
+
+                    // 2) خصم ليرة فقط عند debit-only
                     $isDebitOnly = in_array($service, $debitOnlyServices, true)
                                    && $debit !== null && $debit > 0 && $credit === null;
 
@@ -62,26 +65,26 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps = in_array($service, ['ALFA','TOUCH'], true)
                                    && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
-                        $row,$service,$desc,$debit,$credit,$isTopupCreditOnly,$isDirectCreditOnly,$isDebitOnly,$isDirectOps,
+                        $row,$service,$desc,$debit,$credit,
+                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
                         // اقفل رصيد الليرة
                         DB::table('balances')->where('provider','mb_wish_lb')->lockForUpdate()->get();
 
-                        // TOPUP ⇒ زيادة
+                        // TOPUP credit-only ⇒ زيادة
                         if ($isTopupCreditOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
-
                             DB::table('wish_rows_alt')->where('id',$row->id)->update([
                                 'row_status'=>'INVALID','updated_at'=>now(),
                             ]);
@@ -89,14 +92,13 @@ class WishRawAltProcessController extends Controller
                             return;
                         }
 
-                        // ALFA/TOUCH credit-only ⇒ زيادة (الجديد)
+                        // ALFA/TOUCH credit-only ⇒ زيادة
                         if ($isDirectCreditOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
-
                             DB::table('wish_rows_alt')->where('id',$row->id)->update([
                                 'row_status'=>'INVALID','updated_at'=>now(),
                             ]);
@@ -104,14 +106,27 @@ class WishRawAltProcessController extends Controller
                             return;
                         }
 
-                        // خصم ليرة فقط
+                        // W2W credit-only ⇒ زيادة (الجديد)
+                        if ($isW2wCreditOnly) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update([
+                                'row_status'=>'INVALID','updated_at'=>now(),
+                            ]);
+                            $processed++;
+                            return;
+                        }
+
+                        // خصم ليرة فقط (debit-only)
                         if ($isDebitOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
-
                             DB::table('wish_rows_alt')->where('id',$row->id)->update([
                                 'row_status'=>'INVALID','updated_at'=>now(),
                             ]);
@@ -176,7 +191,7 @@ class WishRawAltProcessController extends Controller
                             }
                         }
 
-                        // إن لم تُسوَّ، أضِف ربح الكرت إلى my_balance
+                        // إن لم تتم التسوية، أضِف ربح الكرت إلى my_balance
                         if (!$settled && isset($priceMap[$voucherVal])) {
                             DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
                             DB::table('balances')->where('provider','my_balance')->update([
