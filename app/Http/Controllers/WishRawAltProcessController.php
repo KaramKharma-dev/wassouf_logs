@@ -59,6 +59,9 @@ class WishRawAltProcessController extends Controller
                     // 1-ter) W2W: credit-only → زيادة ليرة
                     $isW2wCreditOnly     = ($service === 'W2W' && $debit === null && $credit !== null);
 
+                    // جديد: OGERO BILLS: credit-only → زيادة ليرة
+                    $isOgeroCreditOnly   = ($service === 'OGERO BILLS' && $debit === null && $credit !== null);
+
                     // 1-quater) TOUCH VALIDITY TRANSFER: مع debit وعدّ الأيام من الوصف
                     $isTouchValidity     = ($service === 'TOUCH VALIDITY TRANSFER' && $debit !== null && $debit > 0);
 
@@ -76,14 +79,14 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps         = in_array($service, ['ALFA','TOUCH'], true)
                                            && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isOgeroCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
                         $row,$service,$desc,$debit,$credit,
-                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isDebitOnly,$isDirectOps,
+                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isOgeroCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
                         // اقفل رصيد الليرة
@@ -113,6 +116,17 @@ class WishRawAltProcessController extends Controller
 
                         // W2W credit-only ⇒ زيادة
                         if ($isW2wCreditOnly) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
+                        }
+
+                        // OGERO BILLS credit-only ⇒ زيادة
+                        if ($isOgeroCreditOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
                                 'updated_at' => now(),
