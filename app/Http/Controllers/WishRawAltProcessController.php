@@ -93,10 +93,12 @@ class WishRawAltProcessController extends Controller
                         }
 
                     DB::transaction(function () use (
-                        $row,$service,$desc,$debit,$credit,
-                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isOgeroCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isIdmDebitOnly,$isIdmCreditOnly,$isDebitOnly,$isDirectOps,
-                        $priceMap,$targetDate,&$processed,&$skipped
-                    ) {
+                            $row,$service,$desc,$debit,$credit,
+                            $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isOgeroCreditOnly,
+                            $isTouchValidity,$isPsnDebit,$isQrCollect,$isCollectionOnline,
+                            $isIdmDebitOnly,$isIdmCreditOnly,$isDebitOnly,$isDirectOps,
+                            $priceMap,$targetDate,&$processed,&$skipped
+                        ) {
                         // اقفل رصيد الليرة
                         DB::table('balances')->where('provider','mb_wish_lb')->lockForUpdate()->get();
 
@@ -249,7 +251,7 @@ class WishRawAltProcessController extends Controller
                             DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
                             $processed++; return;
                         }
-                        
+
                         // COLLECTION ONLINE debit-only ⇒ خصم ليرة + إضافة (debit/89000) USD إلى my_balance
                         if ($isCollectionOnline) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
