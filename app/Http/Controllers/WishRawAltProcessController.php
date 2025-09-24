@@ -65,6 +65,9 @@ class WishRawAltProcessController extends Controller
                     // جديد: PSN مع debit فقط
                     $isPsnDebit          = ($service === 'PSN' && $debit !== null && $debit > 0);
 
+                    // جديد: QR COLLECT مع debit فقط
+                    $isQrCollect         = ($service === 'QR COLLECT' && $debit !== null && $debit > 0 && $credit === null);
+
                     // 2) خصم ليرة فقط عند debit-only
                     $isDebitOnly         = in_array($service, $debitOnlyServices, true)
                                            && $debit !== null && $debit > 0 && $credit === null;
@@ -73,14 +76,14 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps         = in_array($service, ['ALFA','TOUCH'], true)
                                            && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isTouchValidity || $isPsnDebit || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
                         $row,$service,$desc,$debit,$credit,
-                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isTouchValidity,$isPsnDebit,$isDebitOnly,$isDirectOps,
+                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isTouchValidity,$isPsnDebit,$isQrCollect,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
                         // اقفل رصيد الليرة
@@ -144,7 +147,7 @@ class WishRawAltProcessController extends Controller
                             $skipped++; return;
                         }
 
-                        // PSN debit-only ⇒ خصم ليرة + إضافة على my_balance حسب الفئة في الوصف
+                        // PSN debit-only ⇒ خصم ليرة + إضافة على my_balance حسب الفئة
                         if ($isPsnDebit) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
@@ -152,7 +155,6 @@ class WishRawAltProcessController extends Controller
                             ]);
                             if ($ok < 1) { $skipped++; return; }
 
-                            // استخراج الفئة: PSN $10 / $25 / $50 / $100
                             if (preg_match('/PSN\s*\$\s*(10|25|50|100)\b/i', $desc, $pm)) {
                                 $psn = (int)$pm[1];
                                 $add = match ($psn) { 10 => 11.0, 25 => 26.0, 50 => 52.0, 100 => 102.0, default => 0.0 };
@@ -164,6 +166,25 @@ class WishRawAltProcessController extends Controller
                                     ]);
                                 }
                             }
+
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
+                        }
+
+                        // QR COLLECT debit-only ⇒ خصم ليرة + إضافة (debit/89000) USD
+                        if ($isQrCollect) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            $usd = round(((float)$debit) / 89000, 4);
+                            DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                            DB::table('balances')->where('provider','my_balance')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.4f', $usd)),
+                                'updated_at' => now(),
+                            ]);
 
                             DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
                             $processed++; return;
