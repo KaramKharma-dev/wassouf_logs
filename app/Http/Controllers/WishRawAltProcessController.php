@@ -62,6 +62,9 @@ class WishRawAltProcessController extends Controller
                     // 1-quater) TOUCH VALIDITY TRANSFER: مع debit وعدّ الأيام من الوصف
                     $isTouchValidity     = ($service === 'TOUCH VALIDITY TRANSFER' && $debit !== null && $debit > 0);
 
+                    // جديد: PSN مع debit فقط
+                    $isPsnDebit          = ($service === 'PSN' && $debit !== null && $debit > 0);
+
                     // 2) خصم ليرة فقط عند debit-only
                     $isDebitOnly         = in_array($service, $debitOnlyServices, true)
                                            && $debit !== null && $debit > 0 && $credit === null;
@@ -70,14 +73,14 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps         = in_array($service, ['ALFA','TOUCH'], true)
                                            && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isTouchValidity || $isDebitOnly || $isDirectOps)) {
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isTouchValidity || $isPsnDebit || $isDebitOnly || $isDirectOps)) {
                         $skipped++;
                         continue;
                     }
 
                     DB::transaction(function () use (
                         $row,$service,$desc,$debit,$credit,
-                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isTouchValidity,$isDebitOnly,$isDirectOps,
+                        $isTopupCreditOnly,$isDirectCreditOnly,$isW2wCreditOnly,$isTouchValidity,$isPsnDebit,$isDebitOnly,$isDirectOps,
                         $priceMap,$targetDate,&$processed,&$skipped
                     ) {
                         // اقفل رصيد الليرة
@@ -116,22 +119,18 @@ class WishRawAltProcessController extends Controller
                             $processed++; return;
                         }
 
-                        // TOUCH VALIDITY TRANSFER: خصم debit، إن كان 30 يوم أضف 3.37 USD وإلا اتركها VALID
+                        // TOUCH VALIDITY TRANSFER
                         if ($isTouchValidity) {
-                            if (!preg_match('/TOUCH\s+(\d+)\s+DAYS/i', $desc, $mm)) {
-                                $skipped++; return; // اتركها VALID
-                            }
+                            if (!preg_match('/TOUCH\s+(\d+)\s+DAYS/i', $desc, $mm)) { $skipped++; return; }
                             $days = (int)$mm[1];
 
                             if ($days === 30) {
-                                // خصم ليرة
                                 $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                     'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
                                     'updated_at' => now(),
                                 ]);
                                 if ($ok < 1) { $skipped++; return; }
 
-                                // إضافة 3.37 إلى my_balance
                                 DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
                                 DB::table('balances')->where('provider','my_balance')->update([
                                     'balance'    => DB::raw('balance + 3.37'),
@@ -142,8 +141,32 @@ class WishRawAltProcessController extends Controller
                                 $processed++; return;
                             }
 
-                            // ليست 30 يوم → اتركها VALID
                             $skipped++; return;
+                        }
+
+                        // PSN debit-only ⇒ خصم ليرة + إضافة على my_balance حسب الفئة في الوصف
+                        if ($isPsnDebit) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            // استخراج الفئة: PSN $10 / $25 / $50 / $100
+                            if (preg_match('/PSN\s*\$\s*(10|25|50|100)\b/i', $desc, $pm)) {
+                                $psn = (int)$pm[1];
+                                $add = match ($psn) { 10 => 11.0, 25 => 26.0, 50 => 52.0, 100 => 102.0, default => 0.0 };
+                                if ($add > 0) {
+                                    DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                                    DB::table('balances')->where('provider','my_balance')->update([
+                                        'balance'    => DB::raw('balance + '.sprintf('%.2f',$add)),
+                                        'updated_at' => now(),
+                                    ]);
+                                }
+                            }
+
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
                         }
 
                         // خصم ليرة فقط (debit-only) + إضافة my_balance لبعض الخدمات debit/89000
@@ -198,20 +221,17 @@ class WishRawAltProcessController extends Controller
                             $removedOnce = false;
                             foreach ($exp as $ev) {
                                 $k = number_format((float)$ev, 2, '.', '');
-                                if (!$removedOnce && $k === $voucherVal) {
-                                    $removedOnce = true;
-                                    continue;
-                                }
+                                if (!$removedOnce && $k === $voucherVal) { $removedOnce = true; continue; }
                                 $new[] = (float)$k;
                             }
 
                             if ($removedOnce) {
                                 $newStatus = empty($new) ? 'RECONCILED' : $drow->status;
                                 DB::table('days_transfers')->where('id',$drow->id)->update([
-                                    'expected_vouchers' => json_encode(array_values($new)),
-                                    'status'            => $newStatus,
-                                    'reconciled_at'     => $newStatus === 'RECONCILED' ? now() : null,
-                                    'updated_at'        => now(),
+                                    'expected_vouchers'=>json_encode(array_values($new)),
+                                    'status'=>$newStatus,
+                                    'reconciled_at'=>$newStatus === 'RECONCILED' ? now() : null,
+                                    'updated_at'=>now(),
                                 ]);
                                 $settled = true;
                                 break;
