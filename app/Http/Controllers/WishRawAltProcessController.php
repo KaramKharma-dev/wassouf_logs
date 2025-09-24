@@ -122,17 +122,30 @@ class WishRawAltProcessController extends Controller
 
                         // خصم ليرة فقط (debit-only)
                         if ($isDebitOnly) {
+                            // خصم من mb_wish_lb
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
+
+                            // ↑ إضافة إلى my_balance للخدمات المحددة: debit/89000
+                            if (in_array($service, ['TERRANET','OGERO BILLS','W2W','SODETEL DIRECT'], true)) {
+                                $usd = round(((float)$debit) / 89000, 4); // balances هو DECIMAL(18,4)
+                                DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                                DB::table('balances')->where('provider','my_balance')->update([
+                                    'balance'    => DB::raw('balance + '.sprintf('%.4f', $usd)),
+                                    'updated_at' => now(),
+                                ]);
+                            }
+
                             DB::table('wish_rows_alt')->where('id',$row->id)->update([
                                 'row_status'=>'INVALID','updated_at'=>now(),
                             ]);
                             $processed++;
                             return;
                         }
+
 
                         // ALFA / TOUCH مع debit: خصم ثم محاولة تسوية الكرت مع days_transfers
                         $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
