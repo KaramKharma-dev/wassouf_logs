@@ -71,6 +71,9 @@ class WishRawAltProcessController extends Controller
                     // جديد: QR COLLECT مع debit فقط
                     $isQrCollect         = ($service === 'QR COLLECT' && $debit !== null && $debit > 0 && $credit === null);
 
+                    // جديد: COLLECTION ONLINE مع debit فقط
+                    $isCollectionOnline   = ($service === 'COLLECTION ONLINE' && $debit !== null && $debit > 0 && $credit === null);
+
                     // جديد: IDM DIRECT حالتان
                     $isIdmDebitOnly      = ($service === 'IDM DIRECT' && $debit !== null && $debit > 0 && $credit === null);
                     $isIdmCreditOnly     = ($service === 'IDM DIRECT' && $debit === null && $credit !== null && $credit > 0);
@@ -83,10 +86,11 @@ class WishRawAltProcessController extends Controller
                     $isDirectOps         = in_array($service, ['ALFA','TOUCH'], true)
                                            && $debit !== null && $debit > 0;
 
-                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isOgeroCreditOnly || $isTouchValidity || $isPsnDebit || $isQrCollect || $isIdmDebitOnly || $isIdmCreditOnly || $isDebitOnly || $isDirectOps)) {
-                        $skipped++;
-                        continue;
-                    }
+                    if (!($isTopupCreditOnly || $isDirectCreditOnly || $isW2wCreditOnly || $isOgeroCreditOnly
+                            || $isTouchValidity || $isPsnDebit || $isQrCollect || $isCollectionOnline
+                            || $isIdmDebitOnly || $isIdmCreditOnly || $isDebitOnly || $isDirectOps)) {
+                            $skipped++; continue;
+                        }
 
                     DB::transaction(function () use (
                         $row,$service,$desc,$debit,$credit,
@@ -229,6 +233,25 @@ class WishRawAltProcessController extends Controller
 
                         // QR COLLECT debit-only ⇒ خصم ليرة + إضافة (debit/89000) USD
                         if ($isQrCollect) {
+                            $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
+                                'updated_at' => now(),
+                            ]);
+                            if ($ok < 1) { $skipped++; return; }
+
+                            $usd = round(((float)$debit) / 89000, 4);
+                            DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                            DB::table('balances')->where('provider','my_balance')->update([
+                                'balance'    => DB::raw('balance + '.sprintf('%.4f', $usd)),
+                                'updated_at' => now(),
+                            ]);
+
+                            DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
+                            $processed++; return;
+                        }
+                        
+                        // COLLECTION ONLINE debit-only ⇒ خصم ليرة + إضافة (debit/89000) USD إلى my_balance
+                        if ($isCollectionOnline) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance - '.sprintf('%.2f',(float)$debit)),
                                 'updated_at' => now(),
