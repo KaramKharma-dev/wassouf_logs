@@ -279,7 +279,7 @@ class WishRawAltProcessController extends Controller
                             ]);
                             if ($ok < 1) { $skipped++; return; }
 
-                            if (in_array($service, ['TERRANET','OGERO BILLS','W2W','SODETEL DIRECT'], true)) {
+                            if (in_array($service, ['ALFA BILLS','TOUCH BILLS','TERRANET','OGERO BILLS','W2W','SODETEL DIRECT'], true)) {
                                 $usd = round(((float)$debit) / 89000, 4);
                                 DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
                                 DB::table('balances')->where('provider','my_balance')->update([
