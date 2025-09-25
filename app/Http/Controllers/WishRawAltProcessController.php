@@ -136,15 +136,25 @@ class WishRawAltProcessController extends Controller
                         }
 
                         // OGERO BILLS credit-only ⇒ زيادة
+                        // OGERO BILLS credit-only ⇒ زيادة ليرة + طرح (credit/89000) من my_balance
                         if ($isOgeroCreditOnly) {
                             $ok = DB::table('balances')->where('provider','mb_wish_lb')->update([
                                 'balance'    => DB::raw('balance + '.sprintf('%.2f',(float)$credit)),
                                 'updated_at' => now(),
                             ]);
                             if ($ok < 1) { $skipped++; return; }
+
+                            $usd = round(((float)$credit) / 89000, 4);
+                            DB::table('balances')->where('provider','my_balance')->lockForUpdate()->get();
+                            DB::table('balances')->where('provider','my_balance')->update([
+                                'balance'    => DB::raw('balance - '.sprintf('%.4f', $usd)),
+                                'updated_at' => now(),
+                            ]);
+
                             DB::table('wish_rows_alt')->where('id',$row->id)->update(['row_status'=>'INVALID','updated_at'=>now()]);
                             $processed++; return;
                         }
+
 
                         // جديد: IDM DIRECT (debit-only) ⇒ خصم ليرة + إضافة (debit/89000) USD
                         if ($isIdmDebitOnly) {
