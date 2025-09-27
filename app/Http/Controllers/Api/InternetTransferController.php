@@ -107,41 +107,179 @@ class InternetTransferController extends Controller
     }
 
     public function smsCallback(Request $request)
-{
-    $data = $request->validate([
-        'provider'   => ['required', Rule::in(['alfa','mtc'])],
-        'raw_sms'    => ['required','string','max:2000'],
-        'sms_sender' => ['nullable','string','max:100'],
-    ]);
+    {
+        $data = $request->validate([
+            'provider'   => ['required', Rule::in(['alfa','mtc'])],
+            'raw_sms'    => ['required','string','max:2000'],
+            'sms_sender' => ['nullable','string','max:100'],
+        ]);
 
-    $provider = $data['provider'];
-    $rawSms   = $data['raw_sms'];
-    $smsHash  = sha1($provider.'|'.$rawSms);
+        $provider = $data['provider'];
+        $rawSms   = $data['raw_sms'];
+        $smsHash  = sha1($provider.'|'.$rawSms);
 
-    return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
+        return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
 
-        // 1) استخرج الرقم والكمية
-        $msisdn = $this->extractMsisdnFromSms($rawSms);
-        $qty    = $this->extractQtyGbFromSms($rawSms);
+            // NEW: اكتشاف رسائل الفشل “cannot receive … as an Alfa Gift”
+            if ($this->isFailureSms($rawSms)) {
+                $msisdn = $this->extractMsisdnFromSms($rawSms);
+                $qty    = $this->extractQtyGbFromSms($rawSms); // قد تكون غير موجودة في رسالة الفشل
 
-        if (!$msisdn) {
-            return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_sms'], 422);
-        }
-        if ($qty === null) {
-            return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
-        }
+                if (!$msisdn) {
+                    return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_failure_sms'], 422);
+                }
 
-        // 2) إن وُجد PENDING مطابق اقفله، وإلا أنشئ صف COMPLETED جديد
-        $candidate = InternetTransfer::where('status','PENDING')
-            ->where('provider',$provider)
-            ->where('receiver_number', $msisdn)
-            ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001])
-            ->orderByDesc('id')
-            ->lockForUpdate()
-            ->first();
+                $pendingQuery = InternetTransfer::where('status','PENDING')
+                    ->where('provider',$provider)
+                    ->where('receiver_number', $msisdn)
+                    ->orderByDesc('id')
+                    ->lockForUpdate();
 
-        // جدول الأسعار (نفسه المعتمد بباقي الدوال)
-        $pricing = [
+                if ($qty !== null) {
+                    $pendingQuery->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001]);
+                }
+
+                $candidate = $pendingQuery->first();
+
+                if ($candidate) {
+                    $candidate->status   = 'FAILED';
+                    $candidate->sms_hash = $smsHash;
+                    $candidate->sms_meta = [
+                        'sender' => $data['sms_sender'] ?? null,
+                        'raw'    => $rawSms,
+                        'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
+                        'reason' => 'cannot_receive_gift',
+                    ];
+                    $candidate->save();
+
+                    return response()->json([
+                        'ok'=>true,'id'=>$candidate->id,'status'=>'FAILED',
+                        'msg'=>'pending matched -> failed; no balance changes'
+                    ], 200);
+                }
+
+                // لا يوجد Pending مطابق: نسجل صف FAILED للمراجعة فقط
+                // محاولة استنتاج النوع والسعر للتوثيق
+                $pricing = $this->pricingMatrix();
+                [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty ?? 0.0, $rawSms);
+
+                $row = new InternetTransfer();
+                $row->sender_number   = $this->pickSenderNumber($provider, $data['sms_sender'] ?? null);
+                $row->receiver_number = $msisdn;
+                $row->quantity_gb     = $qty ?? 0.0;
+                if ($price !== null) $row->price = $price;
+                $row->provider        = $provider;
+                if ($pickedType !== null) $row->type = $pickedType;
+                $row->status          = 'FAILED';
+                $row->sms_hash        = $smsHash;
+                $row->sms_meta        = [
+                    'sender' => $data['sms_sender'] ?? null,
+                    'raw'    => $rawSms,
+                    'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
+                    'reason' => 'cannot_receive_gift',
+                    'auto_failed' => true,
+                ];
+                $row->save();
+
+                return response()->json([
+                    'ok'=>true,'id'=>$row->id,'status'=>'FAILED',
+                    'msg'=>'no pending -> created failed; no balance changes'
+                ], 201);
+            }
+
+            // 1) استخرج الرقم والكمية لحالات النجاح
+            $msisdn = $this->extractMsisdnFromSms($rawSms);
+            $qty    = $this->extractQtyGbFromSms($rawSms);
+
+            if (!$msisdn) {
+                return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_sms'], 422);
+            }
+            if ($qty === null) {
+                return response()->json(['ok'=>false,'error'=>'quantity_gb_not_found_in_sms'], 422);
+            }
+
+            // 2) إن وُجد PENDING مطابق اقفله كـ COMPLETED
+            $candidate = InternetTransfer::where('status','PENDING')
+                ->where('provider',$provider)
+                ->where('receiver_number', $msisdn)
+                ->whereBetween('quantity_gb', [$qty-0.001, $qty+0.001])
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
+
+            $pricing = $this->pricingMatrix();
+
+            if ($candidate) {
+                $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
+                $type   = $candidate->type;
+                $prov   = $candidate->provider;
+
+                if (!isset($pricing[$type][$prov][$qtyKey])) {
+                    return response()->json(['ok'=>false,'error'=>'pricing_not_found'], 422);
+                }
+
+                $deduct = $pricing[$type][$prov][$qtyKey]['deduct'];
+                $price  = $pricing[$type][$prov][$qtyKey]['add'];
+
+                Balance::adjust($prov, -$deduct);
+                Balance::adjust('my_balance', $price);
+
+                $candidate->status       = 'COMPLETED';
+                $candidate->confirmed_at = now();
+                $candidate->sms_hash     = $smsHash;
+                $candidate->sms_meta     = [
+                    'sender' => $data['sms_sender'] ?? null,
+                    'raw'    => $rawSms,
+                    'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
+                ];
+                $candidate->price        = $price;
+                $candidate->save();
+
+                return response()->json([
+                    'ok'=>true,'id'=>$candidate->id,'status'=>$candidate->status,
+                    'msg'=>'pending matched -> completed, balances updated'
+                ], 200);
+            }
+
+            // لا Pending: إنشاء COMPLETED جديد
+            [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
+            if ($pickedType === null) {
+                return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
+            }
+
+            Balance::adjust($provider, -$deduct);
+            Balance::adjust('my_balance', $price);
+
+            $row = new InternetTransfer();
+            $row->sender_number   = $this->pickSenderNumber($provider, $data['sms_sender'] ?? null);
+            $row->receiver_number = $msisdn;
+            $row->quantity_gb     = $qty;
+            $row->price           = $price;
+            $row->provider        = $provider;
+            $row->type            = $pickedType;
+            $row->status          = 'COMPLETED';
+            $row->confirmed_at    = now();
+            $row->sms_hash        = $smsHash;
+            $row->sms_meta        = [
+                'sender' => $data['sms_sender'] ?? null,
+                'raw'    => $rawSms,
+                'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
+                'auto_completed' => true,
+            ];
+            $row->save();
+
+            return response()->json([
+                'ok'=>true,'id'=>$row->id,'status'=>$row->status,
+                'msg'=>'no pending -> created completed, balances updated'
+            ], 201);
+        });
+    }
+
+    // ==== Helpers ====
+
+    private function pricingMatrix(): array
+    {
+        return [
             'monthly' => [
                 'alfa' => [
                     '1'=>['deduct'=>3.5,'add'=>4],'7'=>['deduct'=>9,'add'=>10],
@@ -183,74 +321,7 @@ class InternetTransferController extends Controller
                 ],
             ],
         ];
-
-        if ($candidate) {
-            // أكمل الموجود
-            $qtyKey = rtrim(rtrim(sprintf('%.3f', (float)$candidate->quantity_gb), '0'), '.');
-            $type   = $candidate->type;
-            $prov   = $candidate->provider;
-
-            if (!isset($pricing[$type][$prov][$qtyKey])) {
-                return response()->json(['ok'=>false,'error'=>'pricing_not_found'], 422);
-            }
-
-            $deduct = $pricing[$type][$prov][$qtyKey]['deduct'];
-            $price  = $pricing[$type][$prov][$qtyKey]['add'];
-
-            Balance::adjust($prov, -$deduct);
-            Balance::adjust('my_balance', $price);
-
-            $candidate->status       = 'COMPLETED';
-            $candidate->confirmed_at = now();
-            $candidate->sms_hash     = $smsHash; // للحفظ فقط، لا منع
-            $candidate->sms_meta     = [
-                'sender' => $data['sms_sender'] ?? null,
-                'raw'    => $rawSms,
-                'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
-            ];
-            $candidate->price        = $price;
-            $candidate->save();
-
-            return response()->json([
-                'ok'=>true,'id'=>$candidate->id,'status'=>$candidate->status,
-                'msg'=>'pending matched -> completed, balances updated'
-            ], 200);
-        }
-
-        // إنشاء صف COMPLETED جديد
-        [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
-        if ($pickedType === null) {
-            return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
-        }
-
-        Balance::adjust($provider, -$deduct);
-        Balance::adjust('my_balance', $price);
-
-        $row = new InternetTransfer();
-        $row->sender_number   = $this->pickSenderNumber($provider, $data['sms_sender'] ?? null);
-        $row->receiver_number = $msisdn;
-        $row->quantity_gb     = $qty;
-        $row->price           = $price;
-        $row->provider        = $provider;
-        $row->type            = $pickedType;
-        $row->status          = 'COMPLETED';
-        $row->confirmed_at    = now();
-        $row->sms_hash        = $smsHash; // للحفظ فقط
-        $row->sms_meta        = [
-            'sender' => $data['sms_sender'] ?? null,
-            'raw'    => $rawSms,
-            'parsed' => ['msisdn'=>$msisdn,'quantity_gb'=>$qty],
-            'auto_completed' => true,
-        ];
-        $row->save();
-
-        return response()->json([
-            'ok'=>true,'id'=>$row->id,'status'=>$row->status,
-            'msg'=>'no pending -> created completed, balances updated'
-        ], 201);
-    });
-}
-
+    }
 
     private function resolvePriceAndType(array $pricing, string $provider, float $qty, string $rawSms): array
     {
@@ -309,5 +380,12 @@ class InternetTransferController extends Controller
             return round((float)$m[1], 3);
         }
         return null;
+    }
+
+    // NEW: كاشف الفشل
+    private function isFailureSms(string $text): bool
+    {
+        // مثال الرسالة: "the number 70287364 ... cannot receive the 7GB Mobile Internet as an Alfa Gift"
+        return (bool) preg_match('/cannot\s+receive.*Alfa\s+Gift/i', $text);
     }
 }
