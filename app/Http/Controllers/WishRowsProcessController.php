@@ -54,25 +54,29 @@ class WishRowsProcessController extends Controller
             $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
 
-            // NEW: TOUCH / ALFA (debit only, description holds $amount)
+            // TOUCH / ALFA (debit only, description holds $amount)
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
+
             $isAnghami = ($service === 'ANGHAMI' && $debit !== null && $credit === null);
 
-            // NEW: CABLEVISION (debit only) → mb_wish_lb -= debit, my_balance += debit
+            // CABLEVISION (debit only) → mb_wish_lb -= debit, my_balance += debit
             $isCablevision = ($service === 'CABLEVISION' && $debit !== null && $credit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision)) {
+            // COLLECTION (same as CABLEVISION)
+            $isCollection = ($service === 'COLLECTION' && $debit !== null && $credit === null);
+
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision || $isCollection)) {
                 $skipped++; continue;
             }
 
             DB::transaction(function () use ($row, $debit, $credit, $descRaw,
-                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision,
+                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision, $isCollection,
                 &$processed, &$skipped) {
 
-                // اختر القفل حسب الحالة لتفادي قفل جداول غير لازمة
+                // اختر القفل حسب الحالة
                 if ($isCurrencyEx) {
                     $providersToLock = ['mb_wish_us','mb_wish_lb'];
-                } elseif ($isCablevision) {
+                } elseif ($isCablevision || $isCollection) {
                     $providersToLock = ['mb_wish_lb','my_balance'];
                 } else {
                     $providersToLock = ['mb_wish_us','my_balance'];
@@ -132,7 +136,7 @@ class WishRowsProcessController extends Controller
                         DB::table('balances')->where('provider','my_balance')
                             ->update(['balance' => DB::raw('balance + 5.61')]);
                     } else {
-                        // unknown mapping → no add
+                        // unknown mapping
                     }
 
                 } elseif ($isAnghami) {
@@ -142,7 +146,7 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
-                } elseif ($isCablevision) {
+                } elseif ($isCablevision || $isCollection) {
                     // mb_wish_lb -= debit
                     DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
