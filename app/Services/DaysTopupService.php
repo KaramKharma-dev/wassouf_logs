@@ -19,7 +19,7 @@ class DaysTopupService
         $allowedKeys = array_map(fn($v)=> number_format((float)$v, 2, '.', ''), $allowed);
         $amtKey = number_format((float)$amount, 2, '.', '');
         if (!in_array($amtKey, $allowedKeys, true)) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
+            throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
 
         $opDate = $ts->timezone(config('app.timezone'))->toDateString();
@@ -28,17 +28,17 @@ class DaysTopupService
             // خزّن الرسالة
             UsdInMsg::create([
                 'msisdn'          => $msisdn,
-                'receiver_number' => $receiver,   // جديد
+                'receiver_number' => $receiver,
                 'provider'        => $provider,
                 'amount'          => $amount,
                 'received_at'     => $ts,
             ]);
 
-            // سطر اليوم حسب receiver_number
+            // CHANGED: سطر اليوم يُناقش حسب sender_number بدلاً من receiver_number
             $row = DaysTransfer::lockForUpdate()
-                ->where('receiver_number',$receiver)
-                ->where('provider',$provider)
-                ->where('op_date',$opDate)
+                ->where('sender_number', $msisdn)
+                ->where('provider', $provider)
+                ->where('op_date', $opDate)
                 ->first();
 
             if (!$row) {
@@ -70,7 +70,7 @@ class DaysTopupService
             $remain  = max(0, round($cap - $sumNow, 2));
             $sumKey  = number_format($sumNow, 2, '.', '');
             if (in_array($sumKey, ['3.00','6.00'], true)) {
-                $remain = 0.00; // شرطك الخاص
+                $remain = 0.00; // شرط خاص
             }
             $row->amount_usd = number_format($remain, 2, '.', '');
 
@@ -78,6 +78,7 @@ class DaysTopupService
             return $row;
         });
     }
+
     public function ingestSms(string $provider, string $msg, string $receiver, Carbon $ts): DaysTransfer
     {
         [$msisdn, $amount] = $this->parseSms($provider, $msg);
@@ -89,6 +90,7 @@ class DaysTopupService
             throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
 
+        // يبقى الـ API على حاله: نفس البراميترات
         return $this->addMsgByDate($msisdn, $receiver, $provider, (float)$amount, $ts);
     }
 
@@ -127,14 +129,24 @@ class DaysTopupService
     // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
     public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
     {
+        // تُركت كما هي إذا كنت تحتاجها لاختبارات مستقبلية
         return DB::transaction(function () use ($msisdn,$provider,$opDate) {
             $row = DaysTransfer::lockForUpdate()
-                ->where(compact('msisdn')) // intentionally wrong; fixed below
-                ->first();
+                ->where('sender_number', $msisdn) // منطقيًا مع التغيير الجديد
+                ->where('provider', $provider)
+                ->where('op_date', $opDate)
+                ->firstOrFail();
+
+            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
+            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+
+            $row->status = 'PENDING_RECON';
+            $row->save();
+            return $row;
         });
     }
 
-    // نسخة صحيحة:
+    // النسخة القديمة التي كانت تعتمد على receiver تُترك كما هي للاستخدام إن رغبت
     public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
     {
         return DB::transaction(function () use ($receiver,$provider,$opDate) {
@@ -144,19 +156,18 @@ class DaysTopupService
                 ->where('op_date',$opDate)
                 ->firstOrFail();
 
-            \App\Models\Balance::adjust($provider, +(float)$row->sum_incoming_usd);
-            \App\Models\Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
+            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
 
-            $row->status = 'PENDING_RECON'; // أو RECONCILED لو بدك إغلاق نهائي
+            $row->status = 'PENDING_RECON';
             $row->save();
             return $row;
         });
     }
 
-
     public function finalizeAllForDate(string $provider, string $opDate): int
     {
-        $rows = \App\Models\DaysTransfer::where('provider',$provider)
+        $rows = DaysTransfer::where('provider',$provider)
             ->where('op_date',$opDate)
             ->where('status','OPEN')
             ->lockForUpdate()
@@ -164,7 +175,8 @@ class DaysTopupService
 
         $n = 0;
         foreach ($rows as $row) {
-            $this->finalizeDayCorrect($row->receiver_number, $provider, $opDate);
+            // تستطيع اختيار أي أسلوب إقفال. هنا نستخدم بالسندر توافقًا مع التغيير.
+            $this->finalizeDay($row->sender_number, $provider, $opDate);
             $n++;
         }
         return $n;
@@ -210,7 +222,4 @@ class DaysTopupService
 
         return [0, [], 'OUT_OF_RANGE', 0.00];
     }
-
-
-
 }
