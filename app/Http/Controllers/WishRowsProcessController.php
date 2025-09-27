@@ -58,14 +58,25 @@ class WishRowsProcessController extends Controller
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
             $isAnghami = ($service === 'ANGHAMI' && $debit !== null && $credit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami)) {
+            // NEW: CABLEVISION (debit only) → mb_wish_lb -= debit, my_balance += debit
+            $isCablevision = ($service === 'CABLEVISION' && $debit !== null && $credit === null);
+
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision)) {
                 $skipped++; continue;
             }
 
-            DB::transaction(function () use ($row, $debit, $credit, $descRaw, $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, &$processed, &$skipped) {
+            DB::transaction(function () use ($row, $debit, $credit, $descRaw,
+                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision,
+                &$processed, &$skipped) {
 
-                $providersToLock = ['mb_wish_us','my_balance'];
-                if ($isCurrencyEx) { $providersToLock = ['mb_wish_us','mb_wish_lb']; }
+                // اختر القفل حسب الحالة لتفادي قفل جداول غير لازمة
+                if ($isCurrencyEx) {
+                    $providersToLock = ['mb_wish_us','mb_wish_lb'];
+                } elseif ($isCablevision) {
+                    $providersToLock = ['mb_wish_lb','my_balance'];
+                } else {
+                    $providersToLock = ['mb_wish_us','my_balance'];
+                }
                 DB::table('balances')->whereIn('provider', $providersToLock)->lockForUpdate()->get();
 
                 if ($isW2W_or_QR_debitOnly) {
@@ -108,15 +119,12 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
                 } elseif ($isTouchOrAlfa) {
-                    // استخرج المبلغ من الوصف: "TOUCH $7.58-+961..." أو "ALFA $4.5-+961..."
                     $amt = $this->extractLeadingUsdAmount($descRaw);
                     if ($amt <= 0) { $skipped++; return; }
 
-                    // mb_wish_us -= debit دائماً
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
 
-                    // my_balance += حسب الحالة: 7.58 → 9 ، 4.5 → 5.61
                     if ($this->ne($amt, 7.58)) {
                         DB::table('balances')->where('provider','my_balance')
                             ->update(['balance' => DB::raw('balance + 9.00')]);
@@ -124,18 +132,25 @@ class WishRowsProcessController extends Controller
                         DB::table('balances')->where('provider','my_balance')
                             ->update(['balance' => DB::raw('balance + 5.61')]);
                     } else {
-                        // قيم غير معروفة حالياً → لا نضيف شيء (أو عدّل حسب رغبتك)
-                        // اتركها بلا إضافة على my_balance
+                        // unknown mapping → no add
                     }
+
                 } elseif ($isAnghami) {
-                    // mb_wish_us -= debit
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
-                    // my_balance += (debit + 1)
                     $toAdd = $debit + 1.00;
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
+
+                } elseif ($isCablevision) {
+                    // mb_wish_lb -= debit
+                    DB::table('balances')->where('provider','mb_wish_lb')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+                    // my_balance += debit
+                    DB::table('balances')->where('provider','my_balance')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
                 }
+
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
                     'row_status' => 'INVALID',
                     'updated_at' => now(),

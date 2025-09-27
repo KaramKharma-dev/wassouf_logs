@@ -23,6 +23,8 @@
   .progress{height:10px;background:#0b1030;border-radius:999px;margin-top:10px;overflow:hidden;border:1px solid #2a3470}
   .bar{height:100%;width:0%;background:linear-gradient(90deg,#4f7cff,#7aa2ff)}
   pre{white-space:pre-wrap;background:#0b1030;border:1px solid #2a3470;border-radius:12px;padding:10px;color:#cfe1ff;max-height:300px;overflow:auto}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:8px;font-size:14px}
+  .kv div{padding:6px 8px;border:1px solid #2a3470;border-radius:10px;background:#0e1330}
   @media (max-width:980px){.wrap{grid-template-columns:1fr}}
 </style>
 
@@ -32,6 +34,24 @@
     @if(session('status'))
       <div class="alert ok">{{ session('status') }}</div>
     @endif
+
+    {{-- عرض تقرير المعالجة بالعربي إذا وفره الكنترولر --}}
+    @php $res = session('result') ?? null; @endphp
+    @if($res)
+      <div class="alert ok">نتيجة المعالجة</div>
+      <div class="kv" style="margin-bottom:10px">
+        @if(isset($res['date']))      <div>التاريخ</div><div>{{ $res['date'] }}</div>@endif
+        @if(isset($res['eligible']))  <div>إجمالي المؤهل</div><div>{{ $res['eligible'] }}</div>@endif
+        @if(isset($res['processed'])) <div>المعالج بنجاح</div><div>{{ $res['processed'] }}</div>@endif
+        @if(isset($res['skipped']))   <div>المتخطّى</div><div>{{ $res['skipped'] }}</div>@endif
+        @if(isset($res['errors']))    <div>أخطاء</div><div>{{ is_array($res['errors']) ? count($res['errors']) : $res['errors'] }}</div>@endif
+      </div>
+      @if(!empty($res['errors']) && is_array($res['errors']))
+        <pre>@foreach($res['errors'] as $e)- {{ $e }}
+@endforeach</pre>
+      @endif
+    @endif
+
     <h3 class="h">معالجة قيود Wish حسب التاريخ</h3>
 
     <form method="get" action="{{ route('wish.process.index') }}" class="row" style="margin-bottom:10px">
@@ -79,7 +99,6 @@
 
 <script>
 (function(){
-  // مسار نسبي لتجنب Mixed Content
   const apiUrl = "/api/wish/usd/batches";
 
   const drop = document.getElementById('drop');
@@ -120,7 +139,6 @@
     setFile(f);
   });
 
-  // نستخدم XMLHttpRequest لأجل شريط التقدم
   sendBtn.addEventListener('click', function(){
     if(!theFile){ return; }
     msg.innerHTML = "";
@@ -133,7 +151,7 @@
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', apiUrl, true);
-    xhr.setRequestHeader('Accept','application/json'); // مهم
+    xhr.setRequestHeader('Accept','application/json');
 
     xhr.upload.onprogress = function(e){
       if(e.lengthComputable){
@@ -146,14 +164,22 @@
       if(xhr.readyState === 4){
         sendBtn.disabled = false;
 
-        let body = xhr.responseText;
-        // حاول JSON
-        try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
+        let raw = xhr.responseText;
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch(_) {}
 
         if(xhr.status >= 200 && xhr.status < 300){
-          msg.innerHTML = '<div class="alert ok">تم الرفع بنجاح</div><pre>'+escapeHtml(body)+'</pre>';
+          const arabic = summarizeUpload(parsed);
+          const pretty = parsed ? JSON.stringify(parsed, null, 2) : raw;
+          msg.innerHTML =
+            '<div class="alert ok">'+ escapeHtml(arabic || 'تم الرفع بنجاح') +'</div>' +
+            '<pre>'+ escapeHtml(pretty) +'</pre>';
         } else {
-          msg.innerHTML = '<div class="alert err">فشل الرفع ('+xhr.status+')</div><pre>'+escapeHtml(body)+'</pre>';
+          const reason = parsed && (parsed.message || parsed.error) ? (parsed.message || parsed.error) : ('فشل الرفع ('+xhr.status+')');
+          const pretty = parsed ? JSON.stringify(parsed, null, 2) : raw;
+          msg.innerHTML =
+            '<div class="alert err">'+ escapeHtml(reason) +'</div>' +
+            '<pre>'+ escapeHtml(pretty) +'</pre>';
         }
       }
     };
@@ -165,6 +191,47 @@
 
     xhr.send(fd);
   });
+
+  // ترجمة الحالة/النتيجة للعربي
+  function summarizeUpload(obj){
+    if(!obj || typeof obj !== 'object') return '';
+    const lines = [];
+
+    // شائعة في استجابات الإنشاء
+    if(obj.message === 'already_uploaded') lines.push('تم رفع هذا الملف سابقًا.');
+    if(typeof obj.batch_id !== 'undefined') lines.push('معرّف الدفعة: ' + obj.batch_id);
+
+    // حالة الدفعة
+    if(obj.status){
+      lines.push('حالة الدفعة: ' + mapStatus(obj.status));
+    }
+
+    // أرقام مفيدة إن وُجدت
+    if(typeof obj.rows_count !== 'undefined')  lines.push('عدد الصفوف في الملف: ' + obj.rows_count);
+    if(typeof obj.inserted   !== 'undefined')  lines.push('المضاف: ' + obj.inserted);
+    if(typeof obj.duplicates !== 'undefined')  lines.push('مكرّر: ' + obj.duplicates);
+    if(typeof obj.failed     !== 'undefined')  lines.push('فشل: ' + obj.failed);
+
+    // تقرير تفصيلي إن وُجد
+    if(Array.isArray(obj.results) && obj.results.length){
+      const ok = obj.results.filter(r=> r.status === 'ok').length;
+      const sk = obj.results.filter(r=> r.status === 'skipped').length;
+      const er = obj.results.filter(r=> r.status === 'error').length;
+      lines.push('ملخّص: ناجح '+ok+' / متخطّى '+sk+' / أخطاء '+er);
+    }
+
+    return lines.join('<br>');
+  }
+
+  function mapStatus(s){
+    switch(String(s).toLowerCase()){
+      case 'processed': return 'تمت المعالجة';
+      case 'processing': return 'قيد المعالجة';
+      case 'pending': return 'معلّق';
+      case 'failed': return 'فشل';
+      default: return s;
+    }
+  }
 
   function escapeHtml(s){
     return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#039;' }[m]));
