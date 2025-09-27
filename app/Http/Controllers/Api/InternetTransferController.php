@@ -120,10 +120,42 @@ class InternetTransferController extends Controller
 
         return DB::transaction(function () use ($provider, $rawSms, $smsHash, $data) {
 
+            // 0) رسائل الصيانة العامة: أسقط أحدث PENDING ضمن آخر 3 سجلات لنفس المزوّد
+            if ($this->isMaintenanceSms($rawSms)) {
+                $lastThree = InternetTransfer::where('provider', $provider)
+                    ->orderByDesc('id')
+                    ->limit(3)
+                    ->lockForUpdate()
+                    ->get();
+
+                $latest = $lastThree->first();
+
+                if ($latest && $latest->status === 'PENDING') {
+                    $latest->status   = 'FAILED';
+                    $latest->sms_hash = $smsHash;
+                    $latest->sms_meta = [
+                        'sender' => $data['sms_sender'] ?? null,
+                        'raw'    => $rawSms,
+                        'parsed' => null,
+                        'reason' => 'maintenance_unavailable',
+                    ];
+                    $latest->save();
+
+                    return response()->json([
+                        'ok'=>true,'id'=>$latest->id,'status'=>'FAILED',
+                        'msg'=>'latest pending -> failed due to maintenance'
+                    ], 200);
+                }
+
+                return response()->json([
+                    'ok'=>false,'error'=>'no_recent_pending_to_fail'
+                ], 200);
+            }
+
             // NEW: اكتشاف رسائل الفشل “cannot receive … as an Alfa Gift”
             if ($this->isFailureSms($rawSms)) {
                 $msisdn = $this->extractMsisdnFromSms($rawSms);
-                $qty    = $this->extractQtyGbFromSms($rawSms); // قد تكون غير موجودة في رسالة الفشل
+                $qty    = $this->extractQtyGbFromSms($rawSms); // قد لا تُذكر في رسالة الفشل
 
                 if (!$msisdn) {
                     return response()->json(['ok'=>false,'error'=>'msisdn_not_found_in_failure_sms'], 422);
@@ -158,8 +190,7 @@ class InternetTransferController extends Controller
                     ], 200);
                 }
 
-                // لا يوجد Pending مطابق: نسجل صف FAILED للمراجعة فقط
-                // محاولة استنتاج النوع والسعر للتوثيق
+                // لا Pending مطابق: نسجل FAILED للمراجعة فقط
                 $pricing = $this->pricingMatrix();
                 [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty ?? 0.0, $rawSms);
 
@@ -187,7 +218,7 @@ class InternetTransferController extends Controller
                 ], 201);
             }
 
-            // 1) استخرج الرقم والكمية لحالات النجاح
+            // 1) رسائل النجاح: استخرج الرقم والكمية
             $msisdn = $this->extractMsisdnFromSms($rawSms);
             $qty    = $this->extractQtyGbFromSms($rawSms);
 
@@ -241,7 +272,7 @@ class InternetTransferController extends Controller
                 ], 200);
             }
 
-            // لا Pending: إنشاء COMPLETED جديد
+            // 3) لا Pending: إنشاء COMPLETED جديد
             [$pickedType, $deduct, $price] = $this->resolvePriceAndType($pricing, $provider, $qty, $rawSms);
             if ($pickedType === null) {
                 return response()->json(['ok'=>false,'error'=>'pricing_not_found_for_qty'], 422);
@@ -382,10 +413,16 @@ class InternetTransferController extends Controller
         return null;
     }
 
-    // NEW: كاشف الفشل
+    // NEW: كاشف الفشل لرسالة عدم قبول الهدية
     private function isFailureSms(string $text): bool
     {
-        // مثال الرسالة: "the number 70287364 ... cannot receive the 7GB Mobile Internet as an Alfa Gift"
         return (bool) preg_match('/cannot\s+receive.*Alfa\s+Gift/i', $text);
+    }
+
+    // NEW: كاشف رسالة الصيانة العامة
+    private function isMaintenanceSms(string $text): bool
+    {
+        // "Our system is currently undergoing regular maintenance and updates. The service is not available at the moment. Please try again later"
+        return (bool) preg_match('/regular\s+maintenance|service\s+is\s+not\s+available/i', $text);
     }
 }
