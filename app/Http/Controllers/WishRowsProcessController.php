@@ -65,18 +65,21 @@ class WishRowsProcessController extends Controller
             // COLLECTION (same as CABLEVISION)
             $isCollection = ($service === 'COLLECTION' && $debit !== null && $credit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision || $isCollection)) {
+            // COLLECTION (same as CABLEVISION)
+            $isCashout = ($service === 'CASH OUT' && $debit !== null && $credit === null);
+
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision || $isCollection || $isCashout)) {
                 $skipped++; continue;
             }
 
             DB::transaction(function () use ($row, $debit, $credit, $descRaw,
-                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision, $isCollection,
+                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision, $isCollection, $isCashout,
                 &$processed, &$skipped) {
 
                 // اختر القفل حسب الحالة
                 if ($isCurrencyEx) {
                     $providersToLock = ['mb_wish_us','mb_wish_lb'];
-                } elseif ($isCablevision || $isCollection) {
+                } elseif ($isCablevision || $isCollection || $isCashout) {
                     $providersToLock = ['mb_wish_lb','my_balance'];
                 } else {
                     $providersToLock = ['mb_wish_us','my_balance'];
@@ -146,13 +149,14 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
-                } elseif ($isCablevision || $isCollection) {
+                } elseif ($isCablevision || $isCollection || $isCashout) {
                     // mb_wish_lb -= debit
                     DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     // my_balance += debit
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
+
                 }
 
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
