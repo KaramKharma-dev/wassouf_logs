@@ -44,8 +44,11 @@ class WishRowsProcessController extends Controller
             $isW2W_or_QR_debitOnly      = (in_array($service, ['W2W','QR COLLECT','WEDDING GIFT']) && $debit !== null && $credit === null);
             $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP','WEDDING GIFT'])     && $credit !== null && $debit === null);
 
-            // PAY BY CARD + description contains TIKTOK (debit only)
+            // PAY BY CARD:
+            // 1) TIKTOK (debit only) → خاصتها القديمة
             $isTiktok = ($service === 'PAY BY CARD' && str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
+            // 2) غير TIKTOK (debit only) → mb_wish_us -= debit, my_balance += debit*1.10
+            $isPayByCardOther = ($service === 'PAY BY CARD' && !str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
 
             // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
@@ -71,7 +74,7 @@ class WishRowsProcessController extends Controller
             // REVERSED W2W (credit only) → mb_wish_us += credit, my_balance -= credit
             $isReversedW2W  = ($service === 'REVERSED W2W'    && $credit !== null && $debit === null);
 
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isPayByCardOther || $isCurrencyEx
                 || $isItunes || $isRoblox || $isFreefire || $isPsn || $isRazer || $isTouchOrAlfa || $isAnghami
                 || $isCablevision || $isCollection || $isCashout || $isWishCollect || $isReversedW2W)) {
                 $skipped++; continue;
@@ -79,7 +82,7 @@ class WishRowsProcessController extends Controller
 
             DB::transaction(function () use (
                 $row, $debit, $credit, $descRaw,
-                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx,
+                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isPayByCardOther, $isCurrencyEx,
                 $isItunes, $isRoblox, $isPsn, $isFreefire, $isRazer, $isTouchOrAlfa, $isAnghami,
                 $isCablevision, $isCollection, $isCashout, $isWishCollect, $isReversedW2W,
                 &$processed, &$skipped
@@ -113,6 +116,15 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
+
+                } elseif ($isPayByCardOther) {
+                    // mb_wish_us -= debit
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
+                    // my_balance += debit * 1.10
+                    $toAdd = $debit * 1.10;
+                    DB::table('balances')->where('provider','my_balance')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $toAdd))]);
 
                 } elseif ($isCurrencyEx) {
                     $rate = $this->extractLbpRate($row->description ?? '');
