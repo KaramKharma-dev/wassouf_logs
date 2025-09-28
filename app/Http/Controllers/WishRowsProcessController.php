@@ -8,6 +8,10 @@ use Carbon\Carbon;
 
 class WishRowsProcessController extends Controller
 {
+    // إعدادات العمولة وخطوة الصرف
+    private float $feeRate = 0.01;   // 1%
+    private float $payoutStep = 1.00; // صرف على أقرب 1$
+
     public function index(Request $r)
     {
         $date = $r->query('date', Carbon::today()->toDateString());
@@ -45,7 +49,7 @@ class WishRowsProcessController extends Controller
             $isW2W_or_TOPUP_creditOnly  = (in_array($service, ['W2W','TOPUP','WEDDING GIFT'])     && $credit !== null && $debit === null);
 
             // PAY BY CARD:
-            // 1) TIKTOK (debit only) → خاصتها القديمة
+            // 1) TIKTOK (debit only)
             $isTiktok = ($service === 'PAY BY CARD' && str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
             // 2) غير TIKTOK (debit only) → mb_wish_us -= debit, my_balance += debit*1.10
             $isPayByCardOther = ($service === 'PAY BY CARD' && !str_contains($desc, 'TIKTOK') && $debit !== null && $credit === null);
@@ -53,7 +57,7 @@ class WishRowsProcessController extends Controller
             // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
 
-            // ITUNES* or RAZER or ROBLOX or FREE FIRE or PSN (debit only)
+            // ITUNES* / RAZER / ROBLOX / FREE FIRE / PSN (debit only)
             $isItunes   = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer    = ($service === 'RAZER' && $debit !== null && $credit === null);
             $isRoblox   = ($service === 'ROBLOX' && $debit !== null && $credit === null);
@@ -89,7 +93,7 @@ class WishRowsProcessController extends Controller
             ) {
                 // اختيار الأقفال
                 if ($isCurrencyEx) {
-                    $providersToLock = ['mb_wish_us','mb_wish_us'];
+                    $providersToLock = ['mb_wish_us','mb_wish_lb'];
                 } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
                     $providersToLock = ['mb_wish_us','my_balance'];
                 } else {
@@ -104,11 +108,14 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isW2W_or_TOPUP_creditOnly) {
-                    $myDelta = $credit - ($credit * 0.01);
+                    // payout = floor( credit / (1 + feeRate) ) على خطوة 1$
+                    $payout = $this->payoutFromCredit($credit, $this->feeRate, $this->payoutStep);
+
+                    // إدخالات الرصيد
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
                     DB::table('balances')->where('provider','my_balance')
-                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$myDelta))]);
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$payout))]);
 
                 } elseif ($isTiktok) {
                     $award = $this->tiktokBucket($debit);
@@ -118,10 +125,9 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
 
                 } elseif ($isPayByCardOther) {
-                    // mb_wish_us -= debit
+                    // mb_wish_us -= debit ، my_balance += debit * 1.10
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
-                    // my_balance += debit * 1.10
                     $toAdd = $debit * 1.10;
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $toAdd))]);
@@ -134,7 +140,7 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
 
-                    DB::table('balances')->where('provider','mb_wish_us')
+                    DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
                 } elseif ($isItunes || $isRazer || $isRoblox || $isPsn || $isFreefire) {
@@ -170,15 +176,14 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
                 } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
-                    // mb_wish_us -= debit
+                    // mb_wish_us -= debit ، my_balance += debit
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
-                    // my_balance += debit
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isReversedW2W) {
-                    // mb_wish_us += credit, my_balance -= credit
+                    // mb_wish_us += credit ، my_balance -= credit
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
                     DB::table('balances')->where('provider','my_balance')
@@ -226,7 +231,24 @@ class WishRowsProcessController extends Controller
         return 0.0;
     }
 
-    // مقارنة بفروقات عشرية صغيرة
+    // floor إلى أقرب خطوة
+    private function floorToStep(float $x, float $step): float
+    {
+        if ($step <= 0) { $step = 0.01; }
+        $units = floor(($x + 1e-9) / $step);
+        return (float) ($units * $step);
+    }
+
+    // يحسب payout من credit وفق feeRate وعلى خطوة محددة
+    private function payoutFromCredit(float $credit, float $feeRate, float $step): float
+    {
+        if ($credit <= 0) return 0.0;
+        $raw = $credit / (1.0 + $feeRate);
+        $payout = $this->floorToStep($raw, $step);
+        return (float) number_format($payout, 2, '.', '');
+    }
+
+    // مقارنة بفروقات عشرية صغيرة (تستخدم كـ "≈ يساوي")
     private function ne(float $a, float $b, float $eps = 0.02): bool
     {
         return abs($a - $b) <= $eps;
