@@ -8,9 +8,8 @@ use Carbon\Carbon;
 
 class WishRowsProcessController extends Controller
 {
-    // إعدادات العمولة وخطوة الصرف
-    private float $feeRate = 0.01;    // 1%
-    private float $payoutStep = 1.00; // صرف على أقرب 1$
+    // إعدادات العمولة
+    private float $feeRate = 0.01; // 1%
 
     public function index(Request $r)
     {
@@ -108,13 +107,8 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isW2W_or_TOPUP_creditOnly) {
-                    // إذا credit رقم صحيح → خصم 1% مباشر
-                    // غير ذلك → payout = floor( credit / (1+fee) ) على خطوة 1$
-                    if ($this->isWholeDollar($credit)) {
-                        $payout = (float) number_format($credit * (1.0 - $this->feeRate), 2, '.', '');
-                    } else {
-                        $payout = $this->payoutFromCredit($credit, $this->feeRate, $this->payoutStep);
-                    }
+                    // payout = floor( credit / 1.01 ) إلى السنت
+                    $payout = $this->payoutFloorFromCredit($credit, $this->feeRate);
 
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
@@ -235,30 +229,15 @@ class WishRowsProcessController extends Controller
         return 0.0;
     }
 
-    // floor إلى أقرب خطوة
-    private function floorToStep(float $x, float $step): float
-    {
-        if ($step <= 0) { $step = 0.01; }
-        $units = floor(($x + 1e-9) / $step);
-        return (float) ($units * $step);
-    }
-
-    // يحسب payout من credit وفق feeRate وعلى خطوة محددة
-    private function payoutFromCredit(float $credit, float $feeRate, float $step): float
+    // payout = floor( credit / (1+feeRate) ) إلى السنت
+    private function payoutFloorFromCredit(float $credit, float $feeRate): float
     {
         if ($credit <= 0) return 0.0;
-        $raw = $credit / (1.0 + $feeRate);
-        $payout = $this->floorToStep($raw, $step);
-        return (float) number_format($payout, 2, '.', '');
+        $p = floor(($credit / (1.0 + $feeRate)) * 100.0 + 1e-9) / 100.0;
+        return (float) number_format($p, 2, '.', '');
     }
 
-    // هل المبلغ صحيح بدون كسور؟
-    private function isWholeDollar(float $x): bool
-    {
-        return abs($x - round($x)) < 1e-9;
-    }
-
-    // مقارنة بفروقات عشرية صغيرة (≈ يساوي)
+    // مقارنة بفروقات عشرية صغيرة
     private function ne(float $a, float $b, float $eps = 0.02): bool
     {
         return abs($a - $b) <= $eps;
