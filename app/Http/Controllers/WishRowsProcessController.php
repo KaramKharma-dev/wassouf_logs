@@ -50,27 +50,30 @@ class WishRowsProcessController extends Controller
             // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
 
-            // ITUNES* or RAZER or ROBLOX (debit only)
-            $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
-            $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
-            $isRoblox = ($service === 'ROBLOX' && $debit !== null && $credit === null);
+            // ITUNES* or RAZER or ROBLOX or FREE FIRE or PSN (debit only)
+            $isItunes   = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
+            $isRazer    = ($service === 'RAZER' && $debit !== null && $credit === null);
+            $isRoblox   = ($service === 'ROBLOX' && $debit !== null && $credit === null);
             $isFreefire = ($service === 'FREE FIRE' && $debit !== null && $credit === null);
-            $isPsn = ($service === 'PSN' && $debit !== null && $credit === null);
+            $isPsn      = ($service === 'PSN' && $debit !== null && $credit === null);
 
             // TOUCH / ALFA (debit only, description holds $amount)
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
 
             $isAnghami = ($service === 'ANGHAMI' && $debit !== null && $credit === null);
 
-            // CABLEVISION / COLLECTION / CASH OUT / WHISH COLLECT (debit only) → mb_wish_lb -= debit, my_balance += debit
+            // CABLEVISION / COLLECTION / CASH OUT / WHISH COLLECT (debit only) → mb_wish_us -= debit, my_balance += debit
             $isCablevision  = ($service === 'CABLEVISION'     && $debit !== null && $credit === null);
             $isCollection   = ($service === 'COLLECTION'      && $debit !== null && $credit === null);
             $isCashout      = ($service === 'CASH OUT'        && $debit !== null && $credit === null);
             $isWishCollect  = ($service === 'WHISH COLLECT'   && $debit !== null && $credit === null);
 
+            // REVERSED W2W (credit only) → mb_wish_us += credit, my_balance -= credit
+            $isReversedW2W  = ($service === 'REVERSED W2W'    && $credit !== null && $debit === null);
+
             if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx
                 || $isItunes || $isRoblox || $isFreefire || $isPsn || $isRazer || $isTouchOrAlfa || $isAnghami
-                || $isCablevision || $isCollection || $isCashout || $isWishCollect)) {
+                || $isCablevision || $isCollection || $isCashout || $isWishCollect || $isReversedW2W)) {
                 $skipped++; continue;
             }
 
@@ -78,15 +81,14 @@ class WishRowsProcessController extends Controller
                 $row, $debit, $credit, $descRaw,
                 $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx,
                 $isItunes, $isRoblox, $isPsn, $isFreefire, $isRazer, $isTouchOrAlfa, $isAnghami,
-                $isCablevision, $isCollection, $isCashout, $isWishCollect,
+                $isCablevision, $isCollection, $isCashout, $isWishCollect, $isReversedW2W,
                 &$processed, &$skipped
             ) {
-
                 // اختيار الأقفال
                 if ($isCurrencyEx) {
-                    $providersToLock = ['mb_wish_us','mb_wish_lb'];
+                    $providersToLock = ['mb_wish_us','mb_wish_us'];
                 } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
-                    $providersToLock = ['mb_wish_lb','my_balance'];
+                    $providersToLock = ['mb_wish_us','my_balance'];
                 } else {
                     $providersToLock = ['mb_wish_us','my_balance'];
                 }
@@ -120,7 +122,7 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
 
-                    DB::table('balances')->where('provider','mb_wish_lb')
+                    DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
                 } elseif ($isItunes || $isRazer || $isRoblox || $isPsn || $isFreefire) {
@@ -156,12 +158,19 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
                 } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
-                    // mb_wish_lb -= debit
-                    DB::table('balances')->where('provider','mb_wish_lb')
+                    // mb_wish_us -= debit
+                    DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     // my_balance += debit
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
+
+                } elseif ($isReversedW2W) {
+                    // mb_wish_us += credit, my_balance -= credit
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$credit))]);
+                    DB::table('balances')->where('provider','my_balance')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$credit))]);
                 }
 
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
