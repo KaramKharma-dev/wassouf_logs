@@ -50,37 +50,40 @@ class WishRowsProcessController extends Controller
             // Currency Exchange (debit only, to LBP)
             $isCurrencyEx = ($service === 'CURRENCY EXCHANGE' && $debit !== null && $credit === null);
 
-            // ITUNES* or RAZER (debit only)
+            // ITUNES* or RAZER or ROBLOX (debit only)
             $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
-            $isRoblox  = ($service === 'ROBLOX' && $debit !== null && $credit === null);
+            $isRoblox = ($service === 'ROBLOX' && $debit !== null && $credit === null);
 
             // TOUCH / ALFA (debit only, description holds $amount)
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
 
             $isAnghami = ($service === 'ANGHAMI' && $debit !== null && $credit === null);
 
-            // CABLEVISION (debit only) → mb_wish_lb -= debit, my_balance += debit
-            $isCablevision = ($service === 'CABLEVISION' && $debit !== null && $credit === null);
+            // CABLEVISION / COLLECTION / CASH OUT / WHISH COLLECT (debit only) → mb_wish_lb -= debit, my_balance += debit
+            $isCablevision  = ($service === 'CABLEVISION'     && $debit !== null && $credit === null);
+            $isCollection   = ($service === 'COLLECTION'      && $debit !== null && $credit === null);
+            $isCashout      = ($service === 'CASH OUT'        && $debit !== null && $credit === null);
+            $isWishCollect  = ($service === 'WHISH COLLECT'   && $debit !== null && $credit === null);
 
-            // COLLECTION (same as CABLEVISION)
-            $isCollection = ($service === 'COLLECTION' && $debit !== null && $credit === null);
-
-            // COLLECTION (same as CABLEVISION)
-            $isCashout = ($service === 'CASH OUT' && $debit !== null && $credit === null);
-
-            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx || $isItunes ||  $isRoblox || $isRazer || $isTouchOrAlfa || $isAnghami || $isCablevision || $isCollection || $isCashout)) {
+            if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx
+                || $isItunes || $isRoblox || $isRazer || $isTouchOrAlfa || $isAnghami
+                || $isCablevision || $isCollection || $isCashout || $isWishCollect)) {
                 $skipped++; continue;
             }
 
-            DB::transaction(function () use ($row, $debit, $credit, $descRaw,
-                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx, $isItunes, $isRoblox, $isRazer, $isTouchOrAlfa, $isAnghami, $isCablevision, $isCollection, $isCashout,
-                &$processed, &$skipped) {
+            DB::transaction(function () use (
+                $row, $debit, $credit, $descRaw,
+                $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx,
+                $isItunes, $isRoblox, $isRazer, $isTouchOrAlfa, $isAnghami,
+                $isCablevision, $isCollection, $isCashout, $isWishCollect,
+                &$processed, &$skipped
+            ) {
 
-                // اختر القفل حسب الحالة
+                // اختيار الأقفال
                 if ($isCurrencyEx) {
                     $providersToLock = ['mb_wish_us','mb_wish_lb'];
-                } elseif ($isCablevision || $isCollection || $isCashout) {
+                } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
                     $providersToLock = ['mb_wish_lb','my_balance'];
                 } else {
                     $providersToLock = ['mb_wish_us','my_balance'];
@@ -140,7 +143,7 @@ class WishRowsProcessController extends Controller
                         DB::table('balances')->where('provider','my_balance')
                             ->update(['balance' => DB::raw('balance + 5.61')]);
                     } else {
-                        // unknown mapping
+                        // غير معروف
                     }
 
                 } elseif ($isAnghami) {
@@ -150,14 +153,13 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
 
-                } elseif ($isCablevision || $isCollection || $isCashout) {
+                } elseif ($isCablevision || $isCollection || $isCashout || $isWishCollect) {
                     // mb_wish_lb -= debit
                     DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     // my_balance += debit
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
-
                 }
 
                 DB::table('wish_rows_raw')->where('id',$row->id)->update([
@@ -192,7 +194,7 @@ class WishRowsProcessController extends Controller
         return 0.0;
     }
 
-    // يلتقط الرقم بعد رمز $ في بداية الوصف: "TOUCH $7.58-+961..." أو "ALFA $4.5-+961..."
+    // يلتقط الرقم بعد رمز $ في بداية الوصف
     private function extractLeadingUsdAmount(string $desc): float
     {
         if (preg_match('/\$\s*([0-9]+(?:\.[0-9]+)?)/', $desc, $m)) {
