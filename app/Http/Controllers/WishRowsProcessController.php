@@ -54,6 +54,7 @@ class WishRowsProcessController extends Controller
             $isItunes = (str_contains($service, 'ITUNES') && $debit !== null && $credit === null);
             $isRazer  = ($service === 'RAZER' && $debit !== null && $credit === null);
             $isRoblox = ($service === 'ROBLOX' && $debit !== null && $credit === null);
+            $isFreefire = ($service === 'FREE FIRE' && $debit !== null && $credit === null);
 
             // TOUCH / ALFA (debit only, description holds $amount)
             $isTouchOrAlfa = (in_array($service, ['TOUCH','ALFA']) && $debit !== null && $credit === null);
@@ -67,7 +68,7 @@ class WishRowsProcessController extends Controller
             $isWishCollect  = ($service === 'WHISH COLLECT'   && $debit !== null && $credit === null);
 
             if (!($isW2W_or_QR_debitOnly || $isW2W_or_TOPUP_creditOnly || $isTiktok || $isCurrencyEx
-                || $isItunes || $isRoblox || $isRazer || $isTouchOrAlfa || $isAnghami
+                || $isItunes || $isRoblox || $isFreefire || $isRazer || $isTouchOrAlfa || $isAnghami
                 || $isCablevision || $isCollection || $isCashout || $isWishCollect)) {
                 $skipped++; continue;
             }
@@ -75,7 +76,7 @@ class WishRowsProcessController extends Controller
             DB::transaction(function () use (
                 $row, $debit, $credit, $descRaw,
                 $isW2W_or_QR_debitOnly, $isW2W_or_TOPUP_creditOnly, $isTiktok, $isCurrencyEx,
-                $isItunes, $isRoblox, $isRazer, $isTouchOrAlfa, $isAnghami,
+                $isItunes, $isRoblox, $isFreefire, $isRazer, $isTouchOrAlfa, $isAnghami,
                 $isCablevision, $isCollection, $isCashout, $isWishCollect,
                 &$processed, &$skipped
             ) {
@@ -121,7 +122,7 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
-                } elseif ($isItunes || $isRazer || $isRoblox) {
+                } elseif ($isItunes || $isRazer || $isRoblox || $isFreefire) {
                     $bonus = ($debit < 50) ? 1.00 : 2.00;
                     $toAdd = $debit + $bonus;
                     DB::table('balances')->where('provider','mb_wish_us')
