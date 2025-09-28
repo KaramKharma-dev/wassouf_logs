@@ -229,7 +229,6 @@ class WishRowsProcessController extends Controller
     // مقارنة بفروقات عشرية صغيرة
     private function ne(float $a, float $b, float $eps = 0.02): bool
     {
-        
         return abs($a - $b) <= $eps;
     }
 }
