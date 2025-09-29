@@ -20,7 +20,6 @@ class WishBatchController extends Controller
         return $this->storeWithPreset($req, sink: 'raw', currency: 'USD');
     }
 
-    // LBP → الجدول الجديد
     public function storeLbp(WishBatchUploadRequest $req) {
         return $this->storeWithPreset($req, sink: 'alt', currency: 'LBP');
     }
