@@ -24,7 +24,6 @@ class WishBatchController extends Controller
         return $this->storeWithPreset($req, sink: 'alt', currency: 'LBP');
     }
 
-
     private function storeWithPreset(WishBatchUploadRequest $req, string $sink, string $currency)
     {
         $uploaded = $req->file('file');
