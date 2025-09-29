@@ -202,6 +202,7 @@ class WishRowsProcessController extends Controller
             ->with('status', "eligible=$eligible processed=$processed skipped=$skipped");
     }
 
+    
     private function tiktokBucket(float $debit): float
     {
         $buckets = [12,15,20,25,30,40,50,60,75,100,150,200];
