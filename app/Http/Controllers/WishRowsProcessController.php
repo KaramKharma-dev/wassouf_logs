@@ -126,7 +126,6 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
 
-                    // إذا المبلغ < 10$: الزيادة ثابتة 1$، غير ذلك 10%
                     if ($debit < 10) {
                         $toAdd = $debit + 1.00;
                     } else {
