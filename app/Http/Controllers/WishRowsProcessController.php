@@ -122,13 +122,19 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isPayByCardOther) {
-                    // mb_wish_us -= debit ، my_balance += debit * 1.10
+                    // mb_wish_us -= debit ، my_balance += (debit + bonus)
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f', $debit))]);
-                    $toAdd = $debit * 1.10;
+
+                    // إذا المبلغ < 10$: الزيادة ثابتة 1$، غير ذلك 10%
+                    if ($debit < 10) {
+                        $toAdd = $debit + 1.00;
+                    } else {
+                        $toAdd = $debit * 1.10;
+                    }
+
                     DB::table('balances')->where('provider','my_balance')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $toAdd))]);
-
                 } elseif ($isCurrencyEx) {
                     $rate = $this->extractLbpRate($row->description ?? '');
                     if ($rate <= 0) { $skipped++; return; }
