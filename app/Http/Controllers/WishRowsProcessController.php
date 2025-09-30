@@ -116,11 +116,10 @@ class WishRowsProcessController extends Controller
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$payout))]);
 
                 } elseif ($isTiktok) {
-                    $award = $this->tiktokBucket($debit);
                     DB::table('balances')->where('provider','mb_wish_us')
                         ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
                     DB::table('balances')->where('provider','my_balance')
-                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$award))]);
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$debit))]);
 
                 } elseif ($isPayByCardOther) {
                     // mb_wish_us -= debit ، my_balance += debit * 1.10
@@ -141,7 +140,17 @@ class WishRowsProcessController extends Controller
                     DB::table('balances')->where('provider','mb_wish_lb')
                         ->update(['balance' => DB::raw('balance + '.sprintf('%.2f', $lbp))]);
 
-                } elseif ($isItunes || $isRazer || $isRoblox || $isPsn || $isFreefire) {
+                } elseif ($isRoblox) {
+                    // ROBLOX: bonus شرائح
+                    $bonus = ($debit >= 10 && $debit < 50) ? 2.00 : (($debit >= 50) ? 4.00 : 0.00);
+                    $toAdd = $debit + $bonus;
+                    DB::table('balances')->where('provider','mb_wish_us')
+                        ->update(['balance' => DB::raw('balance - '.sprintf('%.2f',$debit))]);
+                    DB::table('balances')->where('provider','my_balance')
+                        ->update(['balance' => DB::raw('balance + '.sprintf('%.2f',$toAdd))]);
+
+                } elseif ($isItunes || $isRazer || $isPsn || $isFreefire) {
+                    // باقي الخدمات كما هي
                     $bonus = ($debit < 50) ? 1.00 : 2.00;
                     $toAdd = $debit + $bonus;
                     DB::table('balances')->where('provider','mb_wish_us')
@@ -202,7 +211,7 @@ class WishRowsProcessController extends Controller
             ->with('status', "eligible=$eligible processed=$processed skipped=$skipped");
     }
 
-    
+
     private function tiktokBucket(float $debit): float
     {
         $buckets = [12,15,20,25,30,40,50,60,75,100,150,200];
