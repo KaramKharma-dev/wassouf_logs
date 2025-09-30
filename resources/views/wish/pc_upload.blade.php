@@ -1,4 +1,4 @@
-{{-- resources/views/wish/pc_upload.blade.php --}}
+{{-- resources/views/wish/pc.blade.php --}}
 @extends('layouts.app')
 
 @section('content')
@@ -30,10 +30,58 @@
 </style>
 
 <div class="wrap">
-  <!-- بطاقة رفع Excel/CSV لـ Wish PC -->
+  <!-- بطاقة المعالجة (PC) -->
   <div class="card" dir="rtl">
-    <h3 class="h">رفع كشف Wish PC — Excel/CSV</h3>
-    <p class="muted">الإرسال إلى <code>/api/wish/pc/batches</code> بهيدر <code>Accept: application/json</code>.</p>
+    @if(session('status'))
+      <div class="alert ok">{{ session('status') }}</div>
+    @endif
+
+    @php $res = session('result') ?? null; @endphp
+    @if($res)
+      <div class="alert ok">نتيجة المعالجة</div>
+      <div class="kv" style="margin-bottom:10px">
+        @if(isset($res['date']))      <div>التاريخ</div><div>{{ $res['date'] }}</div>@endif
+        @if(isset($res['eligible']))  <div>إجمالي المؤهل</div><div>{{ $res['eligible'] }}</div>@endif
+        @if(isset($res['processed'])) <div>المعالج</div><div>{{ $res['processed'] }}</div>@endif
+        @if(isset($res['skipped']))   <div>المتخطّى</div><div>{{ $res['skipped'] }}</div>@endif
+        @if(isset($res['errors']))    <div>أخطاء</div><div>{{ is_array($res['errors']) ? count($res['errors']) : $res['errors'] }}</div>@endif
+      </div>
+      @if(!empty($res['errors']) && is_array($res['errors']))
+        <pre>@foreach($res['errors'] as $e)- {{ $e }}
+@endforeach</pre>
+      @endif
+    @endif
+
+    <h3 class="h">معالجة قيود Wish (PC) حسب التاريخ</h3>
+
+    <form method="get" action="{{ route('wish.pc.process.index') }}" class="row" style="margin-bottom:10px">
+      <input type="date" name="date" class="input" value="{{ $date ?? now()->toDateString() }}">
+      <button class="btn">تعيين</button>
+    </form>
+
+    <div class="row links" style="margin-bottom:16px">
+      <a href="{{ route('wish.pc.process.index', ['date'=>now()->toDateString()]) }}">اليوم</a>
+      <a href="{{ route('wish.pc.process.index', ['date'=>now()->subDay()->toDateString()]) }}">أمس</a>
+    </div>
+
+    <form method="post" action="{{ route('wish.pc.process.run') }}">
+      @csrf
+      <input type="hidden" name="date" value="{{ $date ?? now()->toDateString() }}">
+      <button class="btn full">بدء المعالجة</button>
+    </form>
+
+    <p class="muted" style="margin-top:8px">
+      القاعدة:
+      إذا <code>debit</code> موجود و<code>credit</code> فارغ ⇒ <code>mb_wish_us -= debit</code> و<code>my_balance += debit</code>.
+      وإذا <code>credit</code> موجود و<code>debit</code> فارغ ⇒ <code>mb_wish_us += credit</code> و<code>my_balance -= credit</code>.
+      ثم تعليم السطر <code>PROCESSED</code>.
+    </p>
+  </div>
+
+  <!-- بطاقة رفع كشف Wish (PC) -->
+  <div class="card" dir="rtl">
+    <h3 class="h">رفع كشف Wish (PC) — Excel/CSV</h3>
+    <p class="muted">يرسل إلى <code>/api/wish/pc/batches</code> بهيدر <code>Accept: application/json</code>.</p>
     <p class="muted" style="margin-top:4px">الأعمدة المتوقعة: <code>id,currency,description,in,out,balance,date</code></p>
 
     <div id="drop" class="uploader" tabindex="0">
@@ -52,16 +100,6 @@
     </div>
 
     <input id="file" type="file" accept=".xlsx,.xls,.csv" style="display:none">
-  </div>
-
-  <!-- بطاقة ملاحظات -->
-  <div class="card" dir="rtl">
-    <h3 class="h">ملاحظات</h3>
-    <ul class="muted" style="line-height:1.8">
-      <li>سيُستنتَج الاتجاه تلقائياً: <code>in</code> = إيداع، <code>out</code> = سحب.</li>
-      <li>سيُنشأ المرجع من <code>id</code> بصيغة <code>pc:123456789</code>.</li>
-      <li>يُحتَفظ باسم الملف و<code>checksum</code> لمنع التكرار.</li>
-    </ul>
   </div>
 </div>
 
@@ -137,7 +175,7 @@
         try { parsed = JSON.parse(raw); } catch(_) {}
 
         if(xhr.status >= 200 && xhr.status < 300){
-          const arabic = summarizeUpload(parsed);
+          const arabic = summarize(parsed);
           const pretty = parsed ? JSON.stringify(parsed, null, 2) : raw;
           msg.innerHTML =
             '<div class="alert ok">'+ escapeHtml(arabic || 'تم الرفع بنجاح') +'</div>' +
@@ -160,7 +198,7 @@
     xhr.send(fd);
   });
 
-  function summarizeUpload(obj){
+  function summarize(obj){
     if(!obj || typeof obj !== 'object') return '';
     const lines = [];
     if(obj.message === 'already_uploaded') lines.push('تم رفع هذا الملف سابقًا.');
