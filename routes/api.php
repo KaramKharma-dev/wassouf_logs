@@ -25,3 +25,7 @@ Route::post('/internet-transfers', [InternetTransferController::class, 'store'])
 
 Route::post('/wish/usd/batches', [WishBatchController::class, 'storeUsd']); // القديم (USD) → wish_rows_raw
 Route::post('/wish/lbp/batches', [WishBatchController::class, 'storeLbp']);
+
+
+
+Route::post('/wish-batches/pc', [WishBatchController::class, 'storePc']);

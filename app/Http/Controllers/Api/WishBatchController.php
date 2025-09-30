@@ -7,6 +7,7 @@ use App\Http\Requests\WishBatchUploadRequest;
 use App\Models\WishBatch;
 use App\Models\WishRowRaw;
 use App\Models\WishRowAlt;
+use App\Models\WishRowPc; // إضافة
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Parser;
@@ -20,8 +21,14 @@ class WishBatchController extends Controller
         return $this->storeWithPreset($req, sink: 'raw', currency: 'USD');
     }
 
+    // LBP → الجدول الجديد
     public function storeLbp(WishBatchUploadRequest $req) {
         return $this->storeWithPreset($req, sink: 'alt', currency: 'LBP');
+    }
+
+    // PC → جدول الكمبيوتر
+    public function storePc(WishBatchUploadRequest $req) {
+        return $this->storeWithPreset($req, sink: 'pc', currency: 'USD');
     }
 
     private function storeWithPreset(WishBatchUploadRequest $req, string $sink, string $currency)
@@ -46,7 +53,7 @@ class WishBatchController extends Controller
                 'filename' => $uploaded->getClientOriginalName() ?: ('wish_' . now()->format('Ymd_His') . '.' . strtolower($uploaded->getClientOriginalExtension())),
                 'checksum' => $checksum,
                 'status'   => 'UPLOADED',
-                'sink'     => $sink,      // raw أو alt
+                'sink'     => $sink,      // raw أو alt أو pc
                 'currency' => $currency,  // USD أو LBP
             ]);
 
@@ -56,9 +63,14 @@ class WishBatchController extends Controller
 
             // التحليل
             $ext = strtolower($uploaded->getClientOriginalExtension());
-            if (in_array($ext, ['xlsx','xls'])) {
-                [$issuedOn, $rows] = $this->parseSpreadsheet($bytes);
-                $rawText = null;
+            if (in_array($ext, ['xlsx','xls','csv'])) {
+                if ($sink === 'pc') {
+                    [$issuedOn, $rows] = $this->parsePcSpreadsheet($bytes);
+                    $rawText = null;
+                } else {
+                    [$issuedOn, $rows] = $this->parseSpreadsheet($bytes);
+                    $rawText = null;
+                }
             } else {
                 [$issuedOn, $rows, $rawText] = $this->parsePdf($bytes);
             }
@@ -69,7 +81,11 @@ class WishBatchController extends Controller
             }
 
             // اختيار الجدول
-            $rowModel = ($sink === 'alt') ? WishRowAlt::class : WishRowRaw::class;
+            $rowModel = match ($sink) {
+                'alt' => WishRowAlt::class,
+                'pc'  => WishRowPc::class,
+                default => WishRowRaw::class,
+            };
 
             // إدخال السطور
             $seq = 0; $valid = 0; $invalid = 0;
@@ -305,6 +321,109 @@ class WishBatchController extends Controller
         }
 
         return [null, $rows];
+    }
+
+    /**
+     * XLSX (Wish PC): يُرجع [issuedOn|null, rows]
+     * الأعمدة المتوقعة: id, currency, description, in, out, balance, date
+     */
+    private function parsePcSpreadsheet(string $bytes): array
+    {
+        $tmp = tmpfile();
+        fwrite($tmp, $bytes);
+        $path = stream_get_meta_data($tmp)['uri'];
+
+        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
+        $reader->setReadDataOnly(true);
+        $sheet = $reader->load($path)->getSheet(0);
+
+        // الهيدر
+        $headers = [];
+        foreach ($sheet->getRowIterator(1,1) as $row) {
+            foreach ($row->getCellIterator() as $cell) {
+                $headers[] = strtolower(trim((string)$cell->getFormattedValue()));
+            }
+        }
+
+        // خريطة الأعمدة
+        $map = ['id'=>null,'currency'=>null,'description'=>null,'in'=>null,'out'=>null,'balance'=>null,'date'=>null];
+        foreach ($headers as $i => $h) {
+            if ($h === 'id') $map['id']=$i;
+            if ($h === 'currency') $map['currency']=$i;
+            if ($h === 'description') $map['description']=$i;
+            if ($h === 'in') $map['in']=$i;
+            if ($h === 'out') $map['out']=$i;
+            if ($h === 'balance') $map['balance']=$i;
+            if ($h === 'date') $map['date']=$i;
+        }
+
+        $rows = [];
+        $highestRow = $sheet->getHighestRow();
+        for ($r = 2; $r <= $highestRow; $r++) {
+            $get = function($idx) use ($sheet, $r) {
+                if ($idx === null) return null;
+                $col = Coordinate::stringFromColumnIndex($idx + 1);
+                return trim((string)$sheet->getCell($col . $r)->getFormattedValue());
+            };
+
+            $idRaw   = $get($map['id']);
+            $desc    = $get($map['description']);
+            $inVal   = $get($map['in']);
+            $outVal  = $get($map['out']);
+            $balVal  = $get($map['balance']);
+            $dateStr = $get($map['date']);
+
+            if (($idRaw === null || $idRaw === '') && ($desc === null || $desc === '') && ($dateStr === null || $dateStr === '')) {
+                continue;
+            }
+
+            // reference من عمود id
+            $digits = preg_replace('/\D+/', '', (string)$idRaw);
+            $reference = $digits !== '' ? ('pc:' . $digits) : null;
+
+            // تحديد المبلغ والاتجاه
+            $amountIn  = ($inVal  === '' || $inVal  === null) ? null : (float)str_replace([',',' '], '', $inVal);
+            $amountOut = ($outVal === '' || $outVal === null) ? null : (float)str_replace([',',' '], '', $outVal);
+            $direction = null; $amount = null;
+            if ($amountIn !== null && $amountIn > 0) {
+                $direction = 'credit'; $amount = $amountIn;
+            } elseif ($amountOut !== null && $amountOut > 0) {
+                $direction = 'debit';  $amount = $amountOut;
+            }
+
+            // الرصيد بعد العملية
+            $balanceAfter = ($balVal === '' || $balVal === null) ? null : (float)str_replace([',',' '], '', $balVal);
+
+            // التاريخ
+            $opDate = null;
+            if ($dateStr !== null && $dateStr !== '') {
+                try { $opDate = Carbon::parse($dateStr); } catch (\Throwable $e) { $opDate = null; }
+            }
+
+            $rows[] = [
+                'op_date'       => $opDate,
+                'reference'     => $reference,
+                'service'       => $this->detectServiceFromPcDesc($desc),
+                'description'   => $desc,
+                'amount'        => $amount,
+                'direction'     => $direction,
+                'balance_after' => $balanceAfter,
+            ];
+        }
+
+        return [null, $rows];
+    }
+
+    // كشف خدمة مبسط لملف PC
+    private function detectServiceFromPcDesc(?string $desc): ?string
+    {
+        if (!$desc) return null;
+        $d = strtoupper($desc);
+        if (str_contains($d, 'LOCAL MONEY TRANSFER')) return 'W2W';
+        if (str_contains($d, 'TOP UP')) return 'TOPUP';
+        if (str_contains($d, 'COLLECT')) return 'COLLECT';
+        if (str_contains($d, 'QR')) return 'QR';
+        return null;
     }
 
     private function extractOperationLines(string $text): array
