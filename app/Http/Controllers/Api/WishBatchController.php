@@ -7,7 +7,8 @@ use App\Http\Requests\WishBatchUploadRequest;
 use App\Models\WishBatch;
 use App\Models\WishRowRaw;
 use App\Models\WishRowAlt;
-use App\Models\WishRowPc; // إضافة
+use App\Models\WishRowPc;
+use App\Models\WishRowPcLb; // جديد
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Smalot\PdfParser\Parser;
@@ -26,9 +27,14 @@ class WishBatchController extends Controller
         return $this->storeWithPreset($req, sink: 'alt', currency: 'LBP');
     }
 
-    // PC → جدول الكمبيوتر
+    // PC USD → جدول الكمبيوتر
     public function storePc(WishBatchUploadRequest $req) {
         return $this->storeWithPreset($req, sink: 'pc', currency: 'USD');
+    }
+
+    // PC LBP → جدول الكمبيوتر اللبناني
+    public function storePclb(WishBatchUploadRequest $req) {
+        return $this->storeWithPreset($req, sink: 'pc_lb', currency: 'LBP');
     }
 
     private function storeWithPreset(WishBatchUploadRequest $req, string $sink, string $currency)
@@ -53,7 +59,7 @@ class WishBatchController extends Controller
                 'filename' => $uploaded->getClientOriginalName() ?: ('wish_' . now()->format('Ymd_His') . '.' . strtolower($uploaded->getClientOriginalExtension())),
                 'checksum' => $checksum,
                 'status'   => 'UPLOADED',
-                'sink'     => $sink,      // raw أو alt أو pc
+                'sink'     => $sink,      // raw أو alt أو pc أو pc_lb
                 'currency' => $currency,  // USD أو LBP
             ]);
 
@@ -64,7 +70,7 @@ class WishBatchController extends Controller
             // التحليل
             $ext = strtolower($uploaded->getClientOriginalExtension());
             if (in_array($ext, ['xlsx','xls','csv'])) {
-                if ($sink === 'pc') {
+                if (in_array($sink, ['pc','pc_lb'])) {
                     [$issuedOn, $rows] = $this->parsePcSpreadsheet($bytes);
                     $rawText = null;
                 } else {
@@ -82,8 +88,9 @@ class WishBatchController extends Controller
 
             // اختيار الجدول
             $rowModel = match ($sink) {
-                'alt' => WishRowAlt::class,
-                'pc'  => WishRowPc::class,
+                'alt'   => WishRowAlt::class,
+                'pc'    => WishRowPc::class,
+                'pc_lb' => WishRowPcLb::class,
                 default => WishRowRaw::class,
             };
 

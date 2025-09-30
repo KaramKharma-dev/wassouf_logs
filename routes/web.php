@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\WishRowsProcessController;
 use App\Http\Controllers\WishRawAltProcessController;
 use App\Http\Controllers\WishRowsPcProcessController;
+use App\Http\Controllers\WishRowsPcLbProcessController;
 
 //WISH USD
 Route::get('/wish/process', [WishRowsProcessController::class, 'index'])->name('wish.process.index');
@@ -23,6 +24,8 @@ Route::get('/wish/pc', function () {
     return view('wish.pc_upload');
 })->name('wish.pc');
 
+Route::get('/wish/pclb/process', [WishRowsPcLbProcessController::class, 'index'])->name('wish.pclb.process.index');
+Route::post('/wish/pclb/process', [WishRowsPcLbProcessController::class, 'run'])->name('wish.pclb.process.run');
 
 Route::get('/', function () {
     return view('welcome');
