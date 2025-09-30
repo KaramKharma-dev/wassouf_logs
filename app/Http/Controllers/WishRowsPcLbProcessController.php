@@ -11,7 +11,7 @@ class WishRowsPcLbProcessController extends Controller
     public function index(Request $r)
     {
         $date = $r->query('date', Carbon::today()->toDateString());
-        return view('wish.pclb', ['date' => $date]); // سنضيف الـBlade لاحقًا
+        return view('wish.pclb', ['date' => $date]); 
     }
 
     public function run(Request $r)
