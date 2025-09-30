@@ -187,7 +187,6 @@ class DaysTopupService
         $pricing = Config::get('days_topup.pricing',[]);
         return (float)($pricing[$months] ?? 0);
     }
-
     // قرار اليوم: أولوية للمبالغ المطابقة تمامًا، وإلا تصنيف عام
     private function decideForToday(string $provider, float $sum): array
     {
