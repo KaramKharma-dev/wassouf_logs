@@ -28,4 +28,4 @@ Route::post('/wish/lbp/batches', [WishBatchController::class, 'storeLbp']);
 
 
 
-Route::post('/wish-batches/pc', [WishBatchController::class, 'storePc']);
+Route::post('/wish/pc/batches', [WishBatchController::class, 'storePc'])->name('api.wish.pc.batches');
