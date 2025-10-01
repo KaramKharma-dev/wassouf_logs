@@ -363,7 +363,6 @@ class WishRawAltProcessController extends Controller
                     });
                 }
             });
-
         return redirect()
             ->route('wish.alt_process.index', ['date' => $targetDate])
             ->with('status', "eligible=$eligible processed=$processed skipped=$skipped");
