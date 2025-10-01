@@ -127,60 +127,65 @@ class DaysTopupService
     }
 
     // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
-    public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
-    {
-        // تُركت كما هي إذا كنت تحتاجها لاختبارات مستقبلية
-        return DB::transaction(function () use ($msisdn,$provider,$opDate) {
-            $row = DaysTransfer::lockForUpdate()
-                ->where('sender_number', $msisdn) // منطقيًا مع التغيير الجديد
-                ->where('provider', $provider)
-                ->where('op_date', $opDate)
-                ->firstOrFail();
+    // طريقة داخلية موحدة: إقفال بالـ id ضمن ترانزاكشن قصيرة
+private function finalizeRowById(int $id): DaysTransfer
+{
+    return DB::transaction(function () use ($id) {
+        $row = DaysTransfer::whereKey($id)->lockForUpdate()->firstOrFail();
 
-            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
-            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
-
-            $row->status = 'PENDING_RECON';
-            $row->save();
+        // تجاهل غير المفتوح
+        if ($row->status !== 'OPEN') {
             return $row;
-        });
-    }
-
-    // النسخة القديمة التي كانت تعتمد على receiver تُترك كما هي للاستخدام إن رغبت
-    public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
-    {
-        return DB::transaction(function () use ($receiver,$provider,$opDate) {
-            $row = DaysTransfer::lockForUpdate()
-                ->where('receiver_number',$receiver)
-                ->where('provider',$provider)
-                ->where('op_date',$opDate)
-                ->firstOrFail();
-
-            Balance::adjust($provider, +(float)$row->sum_incoming_usd);
-            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
-
-            $row->status = 'PENDING_RECON';
-            $row->save();
-            return $row;
-        });
-    }
-
-    public function finalizeAllForDate(string $provider, string $opDate): int
-    {
-        $rows = DaysTransfer::where('provider',$provider)
-            ->where('op_date',$opDate)
-            ->where('status','OPEN')
-            ->lockForUpdate()
-            ->get();
-
-        $n = 0;
-        foreach ($rows as $row) {
-            // تستطيع اختيار أي أسلوب إقفال. هنا نستخدم بالسندر توافقًا مع التغيير.
-            $this->finalizeDay($row->sender_number, $provider, $opDate);
-            $n++;
         }
-        return $n;
+
+        Balance::adjust($row->provider, +(float)$row->sum_incoming_usd);
+        Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+
+        $row->status = 'PENDING_RECON';
+        $row->save();
+        return $row;
+    });
+}
+
+// إقفال بالـ sender_number للتوافق، ثم تفويض للـ id
+public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
+{
+    $row = DaysTransfer::where('sender_number', $msisdn)
+        ->where('provider', $provider)
+        ->where('op_date', $opDate)
+        ->firstOrFail();
+
+    return $this->finalizeRowById($row->id);
+}
+
+// إقفال بالـ receiver_number للتوافق، ثم تفويض للـ id
+public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
+{
+    $row = DaysTransfer::where('receiver_number', $receiver)
+        ->where('provider', $provider)
+        ->where('op_date', $opDate)
+        ->firstOrFail();
+
+    return $this->finalizeRowById($row->id);
+}
+
+// إقفال كل الصفوف المفتوحة لليوم: بالـ id + ترانزاكشن لكل صف
+public function finalizeAllForDate(string $provider, string $opDate): int
+{
+    // اجلب IDs فقط لتقليل الحمل على القفل والذاكرة
+    $ids = DaysTransfer::where('provider', $provider)
+        ->where('op_date', $opDate)
+        ->where('status', 'OPEN')
+        ->pluck('id');
+
+    $n = 0;
+    foreach ($ids as $id) {
+        $this->finalizeRowById((int)$id);
+        $n++;
     }
+    return $n;
+}
+
 
     private function priceOf(int $months): float
     {
