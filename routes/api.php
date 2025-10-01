@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\UsdTransferController;
 use App\Http\Controllers\Api\UsdSmsHookController;
 use App\Http\Controllers\Api\InternetTransferController;
 use App\Http\Controllers\Api\WishBatchController;
-
+use App\Http\Controllers\Api\CashEntryController;
 use App\Http\Controllers\Api\DaysDailyController;
 
 Route::prefix('days')->group(function () {
@@ -28,3 +28,12 @@ Route::post('/wish/lbp/batches', [WishBatchController::class, 'storeLbp']);
 Route::post('/wish/pc/batches', [WishBatchController::class, 'storePc'])->name('api.wish.pc.batches');
 Route::post('/wish/pc/lb/batches', [WishBatchController::class, 'storePclb'])->name('api.wish.pc.batches');
 
+
+Route::prefix('cash-entries')->group(function () {
+    Route::post('list',   [CashEntryController::class, 'list']);    // بديل index (POST)
+    Route::post('stats',  [CashEntryController::class, 'stats']);   // إحصائيات (POST)
+    Route::post('create', [CashEntryController::class, 'store']);   // إنشاء
+    Route::post('show/{id}',   [CashEntryController::class, 'show']);   // عرض عنصر
+    Route::post('update/{id}', [CashEntryController::class, 'update']); // تعديل
+    Route::post('delete/{id}', [CashEntryController::class, 'destroy']); // حذف
+});
