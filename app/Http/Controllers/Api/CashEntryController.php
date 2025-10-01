@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CashEntry;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class CashEntryController extends Controller
@@ -24,7 +25,7 @@ class CashEntryController extends Controller
         $q = CashEntry::query();
 
         if (!empty($data['type'])) {
-            $q->where('entry_type', $data['type']);
+            $q->where('entry_type', strtoupper($data['type']));
         }
         if (!empty($data['from'])) {
             $q->where('created_at', '>=', Carbon::parse($data['from'])->startOfDay());
@@ -48,10 +49,34 @@ class CashEntryController extends Controller
             'entry_type'  => ['required', Rule::in(['RECEIPT','PAYMENT'])],
             'amount'      => ['required','numeric','min:0.01'],
         ]);
-
         $data['entry_type'] = strtoupper($data['entry_type']);
+        $amount = (float)$data['amount'];
 
-        $entry = CashEntry::create($data);
+        $entry = null;
+
+        DB::transaction(function () use (&$entry, $data, $amount) {
+            // أنشئ السجل
+            $entry = CashEntry::create($data);
+
+            // أثر على الرصيد
+            $delta = ($data['entry_type'] === 'RECEIPT') ? +$amount : -$amount;
+
+            // احجز صف الرصيد
+            $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
+            if (!$row) {
+                DB::table('balances')->insert([
+                    'provider'   => 'my_balance',
+                    'balance'    => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+            DB::table('balances')->where('provider','my_balance')->update([
+                'balance'    => DB::raw('balance + '.sprintf('%.2f', $delta)),
+                'updated_at' => now(),
+            ]);
+        });
+
         return response()->json($entry, 201);
     }
 
@@ -71,12 +96,41 @@ class CashEntryController extends Controller
             'amount'      => ['sometimes','required','numeric','min:0.01'],
         ]);
 
-        if (isset($data['entry_type'])) {
-            $data['entry_type'] = strtoupper($data['entry_type']);
-        }
-
         $entry = CashEntry::findOrFail($id);
-        $entry->update($data);
+
+        // احسب الفرق بين القديم والجديد
+        $oldType   = $entry->entry_type;                      // RECEIPT/PAYMENT
+        $oldAmount = (float)$entry->amount;
+        $oldDelta  = ($oldType === 'RECEIPT') ? +$oldAmount : -$oldAmount;
+
+        $newType   = isset($data['entry_type']) ? strtoupper($data['entry_type']) : $oldType;
+        $newAmount = isset($data['amount']) ? (float)$data['amount'] : $oldAmount;
+        $newDelta  = ($newType === 'RECEIPT') ? +$newAmount : -$newAmount;
+
+        $diff = $newDelta - $oldDelta; // ما يجب إضافته على الرصيد
+
+        DB::transaction(function () use ($entry, $data, $newType, $diff) {
+            // حدّث السجل
+            $update = $data;
+            $update['entry_type'] = $newType;
+            $entry->update($update);
+
+            // طبّق الفرق على الرصيد
+            $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
+            if (!$row) {
+                DB::table('balances')->insert([
+                    'provider'   => 'my_balance',
+                    'balance'    => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+            DB::table('balances')->where('provider','my_balance')->update([
+                'balance'    => DB::raw('balance + '.sprintf('%.2f', $diff)),
+                'updated_at' => now(),
+            ]);
+        });
+
         return response()->json($entry);
     }
 
@@ -84,7 +138,30 @@ class CashEntryController extends Controller
     public function destroy(int $id)
     {
         $entry = CashEntry::findOrFail($id);
-        $entry->delete();
+
+        // عكس الأثر قبل الحذف
+        $delta = ($entry->entry_type === 'RECEIPT')
+            ? -(float)$entry->amount   // عكس الزيادة
+            : +(float)$entry->amount;  // عكس النقصان
+
+        DB::transaction(function () use ($entry, $delta) {
+            $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
+            if (!$row) {
+                DB::table('balances')->insert([
+                    'provider'   => 'my_balance',
+                    'balance'    => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+            DB::table('balances')->where('provider','my_balance')->update([
+                'balance'    => DB::raw('balance + '.sprintf('%.2f', $delta)),
+                'updated_at' => now(),
+            ]);
+
+            $entry->delete();
+        });
+
         return response()->json(['deleted' => true]);
     }
 
@@ -99,20 +176,21 @@ class CashEntryController extends Controller
         $from = !empty($data['from']) ? Carbon::parse($data['from'])->startOfDay() : null;
         $to   = !empty($data['to'])   ? Carbon::parse($data['to'])->endOfDay()   : null;
 
-        $range = function($q) use ($from,$to) {
-            if ($from) $q->where('created_at','>=',$from);
-            if ($to)   $q->where('created_at','<=',$to);
-        };
+        $receiptsQ = CashEntry::where('entry_type','RECEIPT');
+        $paymentsQ = CashEntry::where('entry_type','PAYMENT');
 
-        $receipts = CashEntry::where('entry_type','RECEIPT')->tap($range)->sum('amount');
-        $payments = CashEntry::where('entry_type','PAYMENT')->tap($range)->sum('amount');
+        if ($from) { $receiptsQ->where('created_at','>=',$from); $paymentsQ->where('created_at','>=',$from); }
+        if ($to)   { $receiptsQ->where('created_at','<=',$to);   $paymentsQ->where('created_at','<=',$to);   }
+
+        $receipts = (float)$receiptsQ->sum('amount');
+        $payments = (float)$paymentsQ->sum('amount');
 
         return response()->json([
             'from'           => $from?->toDateTimeString(),
             'to'             => $to?->toDateTimeString(),
-            'total_receipts' => round((float)$receipts, 2),
-            'total_payments' => round((float)$payments, 2),
-            'net'            => round((float)$receipts - (float)$payments, 2),
+            'total_receipts' => round($receipts, 2),
+            'total_payments' => round($payments, 2),
+            'net'            => round($receipts - $payments, 2),
         ]);
     }
 }
