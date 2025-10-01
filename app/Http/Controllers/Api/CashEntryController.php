@@ -7,6 +7,7 @@ use App\Models\CashEntry;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 
 class CashEntryController extends Controller
@@ -41,27 +42,29 @@ class CashEntryController extends Controller
         return response()->json($q->orderBy('id','desc')->paginate($perPage));
     }
 
-    // POST /api/cash-entries/create
+    // POST /api/cash-entries/create  (يدعم multipart لرفع صورة)
     public function store(Request $r)
     {
         $data = $r->validate([
             'description' => ['required','string','max:200'],
             'entry_type'  => ['required', Rule::in(['RECEIPT','PAYMENT'])],
             'amount'      => ['required','numeric','min:0.01'],
+            'image'       => ['nullable','image','mimes:jpeg,png,webp','max:4096'],
         ]);
+
         $data['entry_type'] = strtoupper($data['entry_type']);
         $amount = (float)$data['amount'];
+        $entry  = null;
 
-        $entry = null;
+        DB::transaction(function () use (&$entry, $data, $amount, $r) {
+            if ($r->hasFile('image')) {
+                $data['image_path'] = $r->file('image')->store('cash_entries', 'public');
+            }
 
-        DB::transaction(function () use (&$entry, $data, $amount) {
-            // أنشئ السجل
             $entry = CashEntry::create($data);
 
-            // أثر على الرصيد
             $delta = ($data['entry_type'] === 'RECEIPT') ? +$amount : -$amount;
 
-            // احجز صف الرصيد
             $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
             if (!$row) {
                 DB::table('balances')->insert([
@@ -87,35 +90,39 @@ class CashEntryController extends Controller
         return response()->json($entry);
     }
 
-    // POST /api/cash-entries/update/{id}
+    // POST /api/cash-entries/update/{id}  (يدعم استبدال الصورة)
     public function update(Request $r, int $id)
     {
         $data = $r->validate([
             'description' => ['sometimes','required','string','max:200'],
             'entry_type'  => ['sometimes','required', Rule::in(['RECEIPT','PAYMENT'])],
             'amount'      => ['sometimes','required','numeric','min:0.01'],
+            'image'       => ['sometimes','nullable','image','mimes:jpeg,png,webp','max:4096'],
         ]);
 
         $entry = CashEntry::findOrFail($id);
 
-        // احسب الفرق بين القديم والجديد
-        $oldType   = $entry->entry_type;                      // RECEIPT/PAYMENT
+        $oldType   = $entry->entry_type;
         $oldAmount = (float)$entry->amount;
         $oldDelta  = ($oldType === 'RECEIPT') ? +$oldAmount : -$oldAmount;
 
         $newType   = isset($data['entry_type']) ? strtoupper($data['entry_type']) : $oldType;
         $newAmount = isset($data['amount']) ? (float)$data['amount'] : $oldAmount;
         $newDelta  = ($newType === 'RECEIPT') ? +$newAmount : -$newAmount;
+        $diff      = $newDelta - $oldDelta;
 
-        $diff = $newDelta - $oldDelta; // ما يجب إضافته على الرصيد
+        DB::transaction(function () use ($entry, $r, $data, $newType, $diff) {
+            if ($r->hasFile('image')) {
+                if ($entry->image_path) {
+                    Storage::disk('public')->delete($entry->image_path);
+                }
+                $data['image_path'] = $r->file('image')->store('cash_entries', 'public');
+            }
 
-        DB::transaction(function () use ($entry, $data, $newType, $diff) {
-            // حدّث السجل
             $update = $data;
             $update['entry_type'] = $newType;
             $entry->update($update);
 
-            // طبّق الفرق على الرصيد
             $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
             if (!$row) {
                 DB::table('balances')->insert([
@@ -139,10 +146,9 @@ class CashEntryController extends Controller
     {
         $entry = CashEntry::findOrFail($id);
 
-        // عكس الأثر قبل الحذف
         $delta = ($entry->entry_type === 'RECEIPT')
-            ? -(float)$entry->amount   // عكس الزيادة
-            : +(float)$entry->amount;  // عكس النقصان
+            ? -(float)$entry->amount
+            : +(float)$entry->amount;
 
         DB::transaction(function () use ($entry, $delta) {
             $row = DB::table('balances')->where('provider','my_balance')->lockForUpdate()->first();
@@ -158,6 +164,10 @@ class CashEntryController extends Controller
                 'balance'    => DB::raw('balance + '.sprintf('%.2f', $delta)),
                 'updated_at' => now(),
             ]);
+
+            if ($entry->image_path) {
+                Storage::disk('public')->delete($entry->image_path);
+            }
 
             $entry->delete();
         });

@@ -11,7 +11,7 @@ class CashEntry extends Model
     public const TYPE_RECEIPT = 'RECEIPT'; // قبض
     public const TYPE_PAYMENT = 'PAYMENT'; // دفع
 
-    protected $fillable = ['description','entry_type','amount'];
+    protected $fillable = ['description','entry_type','amount','image_path'];
 
     protected $casts = [
         'amount' => 'decimal:2',
@@ -20,4 +20,9 @@ class CashEntry extends Model
     // سكوبات مفيدة
     public function scopeReceipts($q){ return $q->where('entry_type', self::TYPE_RECEIPT); }
     public function scopePayments($q){ return $q->where('entry_type', self::TYPE_PAYMENT); }
+    public function getImageUrlAttribute(): ?string
+    {
+        return $this->image_path ? \Storage::disk('public')->url($this->image_path) : null;
+    }
+
 }
