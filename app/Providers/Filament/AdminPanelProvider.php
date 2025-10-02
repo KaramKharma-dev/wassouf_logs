@@ -36,7 +36,8 @@ class AdminPanelProvider extends PanelProvider
                 \App\Filament\Admin\Widgets\CashRecent::class,
                 Widgets\AccountWidget::class,
             ])
-            ->login() // يعرّف مسار صفحة الدخول
+            ->login()
+            ->authGuard('web')
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
