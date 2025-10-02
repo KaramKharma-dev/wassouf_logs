@@ -30,20 +30,18 @@ class AdminPanelProvider extends PanelProvider
             ->authGuard('web')
             ->colors(['primary' => Color::Amber])
 
-            // اكتشاف ضمن مجلد admin
-            ->discoverResources(in: app_path('Filament/Admin/Resources'), for: 'App\\Filament\\Admin\\Resources')
-            // تسجيل الريسورس صراحة
+            // اكتشف الريسورس من المسار غير الإداري
+            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
+            // سجّل الريسورس صراحةً لتتأكد أثناء البناء
             ->resources([
-                \App\Filament\Admin\Resources\CashEntryResource::class,
+                \App\Filament\Resources\CashEntryResource::class,
             ])
-            ->discoverPages(in: app_path('Filament/Admin/Pages'), for: 'App\\Filament\\Admin\\Pages')
-            ->pages([
-                Pages\Dashboard::class,
-            ])
-            ->discoverWidgets(in: app_path('Filament/Admin/Widgets'), for: 'App\\Filament\\Admin\\Widgets')
-            ->widgets([
-                Widgets\AccountWidget::class,
-            ])
+
+            ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
+            ->pages([ Pages\Dashboard::class ])
+
+            ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
+            ->widgets([ Widgets\AccountWidget::class ])
 
             ->middleware([
                 EncryptCookies::class,
@@ -56,8 +54,6 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
-            ->authMiddleware([
-                Authenticate::class,
-            ]);
+            ->authMiddleware([ Authenticate::class ]);
     }
 }

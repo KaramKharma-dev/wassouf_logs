@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Filament\Admin\Resources\CashEntryResource\Pages;
+namespace App\Filament\Resources\CashEntryResource\Pages;
 
-use App\Filament\Admin\Resources\CashEntryResource;
+use App\Filament\Resources\CashEntryResource;
 use Filament\Resources\Pages\ListRecords;
 
 class ListCashEntries extends ListRecords
@@ -11,6 +11,6 @@ class ListCashEntries extends ListRecords
 
     protected function getHeaderActions(): array
     {
-        return []; // إخفاء زر "إنشاء"
+        return [];
     }
 }

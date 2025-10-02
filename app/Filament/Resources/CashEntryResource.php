@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Filament\Admin\Resources;
+namespace App\Filament\Resources;
 
-use App\Filament\Admin\Resources\CashEntryResource\Pages\ListCashEntries;
+use App\Filament\Resources\CashEntryResource\Pages\ListCashEntries;
 use App\Models\CashEntry;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -20,7 +20,6 @@ class CashEntryResource extends Resource
 
     public static function form(Form $form): Form
     {
-        // لا نستخدمه الآن (عرض فقط)
         return $form->schema([]);
     }
 
@@ -40,8 +39,8 @@ class CashEntryResource extends Resource
             ])
             ->defaultSort('created_at', 'desc')
             ->filters([])
-            ->actions([])        // إزالة أزرار التعديل/الحذف
-            ->bulkActions([]);   // إزالة الأفعال الجمعية
+            ->actions([])
+            ->bulkActions([]);
     }
 
     public static function getPages(): array
