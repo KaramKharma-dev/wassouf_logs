@@ -36,7 +36,6 @@ class AdminPanelProvider extends PanelProvider
                 \App\Filament\Admin\Widgets\CashRecent::class,
                 Widgets\AccountWidget::class,
             ])
-            ->login()
             ->authGuard('web')
             ->middleware([
                 EncryptCookies::class,
