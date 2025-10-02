@@ -7,7 +7,6 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
-use Illuminate\Support\Facades\Log; // <- مؤقت
 
 class User extends Authenticatable implements FilamentUser
 {
@@ -17,7 +16,6 @@ class User extends Authenticatable implements FilamentUser
         'name',
         'email',
         'password',
-        'is_admin',
     ];
 
     protected $hidden = [
@@ -27,18 +25,11 @@ class User extends Authenticatable implements FilamentUser
 
     protected $casts = [
         'email_verified_at' => 'datetime',
-        'is_admin' => 'bool',
-        'password' => 'hashed',
+        'password' => 'hashed', // Laravel 10
     ];
 
     public function canAccessPanel(Panel $panel): bool
     {
-        // مؤقت: سجّل للتشخيص في لوج Railway
-        Log::info('canAccessPanel', [
-            'email' => $this->email,
-            'is_admin' => (bool) $this->is_admin,
-        ]);
-
-        return (bool) $this->is_admin;
+        return true; // السماح بالدخول لأي مستخدم مسجّل
     }
 }
