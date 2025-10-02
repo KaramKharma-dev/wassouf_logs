@@ -49,6 +49,6 @@ class AdminPanelProvider extends PanelProvider
                 DispatchServingFilamentEvent::class,
                 \App\Http\Middleware\SetFilamentLocale::class, // تعريب اللوحة فقط
             ])
-            ->authMiddleware([ Authenticate::class ]);
+            ->authMiddleware([]);
     }
 }
