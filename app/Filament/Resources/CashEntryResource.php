@@ -31,7 +31,7 @@ class CashEntryResource extends Resource
                 Tables\Columns\TextColumn::make('created_at')->label('التاريخ')->dateTime('Y-m-d H:i')->sortable(),
                 Tables\Columns\BadgeColumn::make('entry_type')->label('النوع')
                     ->colors(['success' => 'RECEIPT', 'danger' => 'PAYMENT'])
-                    ->formatStateUsing(fn(string $s) => $s === 'RECEIPT' ? 'قبض' : 'دفع')
+                    ->formatStateUsing(fn (string $state) => $state === 'RECEIPT' ? 'قبض' : 'دفع')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('amount')->label('المبلغ')->numeric(2)->sortable(),
                 Tables\Columns\TextColumn::make('description')->label('الوصف')->limit(60)->searchable(),
