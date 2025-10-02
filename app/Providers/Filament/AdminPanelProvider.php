@@ -36,6 +36,7 @@ class AdminPanelProvider extends PanelProvider
                 \App\Filament\Admin\Widgets\CashRecent::class,
                 Widgets\AccountWidget::class,
             ])
+            ->login()
             ->authGuard('web')
             ->middleware([
                 EncryptCookies::class,
@@ -47,8 +48,9 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
-                \App\Http\Middleware\SetFilamentLocale::class, // تعريب اللوحة فقط
+                \App\Http\Middleware\SetFilamentLocale::class,
+                \App\Http\Middleware\AdminKeyAutoLogin::class, // تعريب اللوحة فقط
             ])
-            ->authMiddleware([]);
+            ->authMiddleware([\Filament\Http\Middleware\Authenticate::class]);
     }
 }
