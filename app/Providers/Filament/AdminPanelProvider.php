@@ -26,28 +26,26 @@ class AdminPanelProvider extends PanelProvider
         URL::forceScheme('https');
 
         return $panel
-            ->default()
             ->id('admin')
             ->path('admin')
-            ->authGuard('web')
-            ->login()
             ->brandName('Fawry')
+            ->login()
+            ->authGuard('web')
             ->colors(['primary' => Color::Blue])
-
+            ->breadcrumbs(false)              // إلغاء التتبّع
+            ->sidebarCollapsibleOnDesktop()   // زر طي القائمة
+            ->maxContentWidth('7xl')          // عرض مريح للترويسة
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
-            ->resources([
-                \App\Filament\Resources\CashEntryResource::class,
-            ])
+            ->resources([\App\Filament\Resources\CashEntryResource::class])
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([Pages\Dashboard::class])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([Widgets\AccountWidget::class])
-
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
-                AuthenticateSession::class, // من Illuminate
+                AuthenticateSession::class,
                 ShareErrorsFromSession::class,
                 VerifyCsrfToken::class,
                 SubstituteBindings::class,
@@ -55,5 +53,6 @@ class AdminPanelProvider extends PanelProvider
                 DispatchServingFilamentEvent::class,
             ])
             ->authMiddleware([Authenticate::class]);
-    }
+
+            }
 }
