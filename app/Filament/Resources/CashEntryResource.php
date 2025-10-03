@@ -33,24 +33,20 @@ class CashEntryResource extends Resource
                 ->required()
                 ->suffix('USD'),
 
-            Forms\Components\Select::make('type')
+            Forms\Components\Select::make('entry_type')
                 ->label('النوع')
                 ->options([
-                    'in'  => 'قبض',
-                    'out' => 'دفع',
+                    'RECEIPT' => 'قبض',
+                    'PAYMENT' => 'دفع',
                 ])
-                ->native(false)
+                ->required()
+                ->native(false),
+
+            Forms\Components\TextInput::make('description')
+                ->label('الوصف')
+                ->maxLength(200)
                 ->required(),
 
-            Forms\Components\TextInput::make('reference')
-                ->label('مرجع')
-                ->maxLength(100),
-
-            Forms\Components\Textarea::make('note')
-                ->label('ملاحظة')
-                ->rows(3),
-
-            // إن كانت تحفظ كملف على disk=public
             Forms\Components\FileUpload::make('image_path')
                 ->label('صورة إيصال')
                 ->disk('public')             // storage/app/public
@@ -88,19 +84,19 @@ class CashEntryResource extends Resource
                 ->sortable()
                 ->badge(),
 
-            Tables\Columns\TextColumn::make('type')
+            Tables\Columns\TextColumn::make('entry_type')
                 ->label('النوع')
-                ->formatStateUsing(fn(string $state) => $state === 'in' ? 'قبض' : 'دفع')
+                ->formatStateUsing(fn(string $s) => $s === 'RECEIPT' ? 'قبض' : 'دفع')
                 ->badge()
                 ->colors([
-                    'success' => fn($state) => $state === 'in',
-                    'danger'  => fn($state) => $state === 'out',
+                    'success' => fn($s) => $s === 'RECEIPT',
+                    'danger'  => fn($s) => $s === 'PAYMENT',
                 ]),
 
-            Tables\Columns\TextColumn::make('reference')
-                ->label('مرجع')
-                ->limit(24)
-                ->tooltip(fn($record) => $record->reference),
+            Tables\Columns\TextColumn::make('description')
+                ->label('الوصف')
+                ->limit(40)
+                ->tooltip(fn($r) => $r->description),
 
             Tables\Columns\TextColumn::make('created_at')
                 ->label('التاريخ')
@@ -108,9 +104,9 @@ class CashEntryResource extends Resource
                 ->sortable(),
         ])
         ->filters([
-            Tables\Filters\SelectFilter::make('type')
+            Tables\Filters\SelectFilter::make('entry_type')
                 ->label('النوع')
-                ->options(['in' => 'قبض', 'out' => 'دفع']),
+                ->options(['RECEIPT' => 'قبض', 'PAYMENT' => 'دفع']),
             Tables\Filters\Filter::make('date')
                 ->form([
                     Forms\Components\DatePicker::make('from')->label('من'),
@@ -146,10 +142,9 @@ class CashEntryResource extends Resource
                 ->hiddenLabel(),
 
             TextEntry::make('amount')->label('المبلغ'),
-            TextEntry::make('type')->label('النوع')
-                ->formatStateUsing(fn(string $s) => $s === 'in' ? 'قبض' : 'دفع'),
-            TextEntry::make('reference')->label('مرجع'),
-            TextEntry::make('note')->label('ملاحظة'),
+            TextEntry::make('entry_type')->label('النوع')
+                ->formatStateUsing(fn(string $s) => $s === 'RECEIPT' ? 'قبض' : 'دفع'),
+            TextEntry::make('description')->label('الوصف'),
             TextEntry::make('created_at')->label('التاريخ')->dateTime('Y-m-d H:i'),
         ]);
     }
