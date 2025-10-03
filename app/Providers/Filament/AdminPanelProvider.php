@@ -29,9 +29,9 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->authGuard('web')
             ->colors(['primary' => Color::Amber])
-            ->rtl()                         // <-- إجبار اتجاه RTL
-            ->breadcrumbs(false)            // تقليل تزاحم أعلى الصفحة
-            ->sidebarCollapsibleOnDesktop() // زر طيّ القائمة
+            ->breadcrumbs(false)
+            ->sidebarCollapsibleOnDesktop()
+            ->maxContentWidth('full')
 
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->resources([
@@ -52,6 +52,7 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+                \App\Http\Middleware\SetFilamentLocale::class, // يضبط ar => RTL
             ])
             ->authMiddleware([ Authenticate::class ]);
     }
