@@ -49,8 +49,8 @@ class CashEntryResource extends Resource
 
             Forms\Components\FileUpload::make('image_path')
                 ->label('صورة إيصال')
-                ->disk('public')             // storage/app/public
-                ->directory('cash_entries')  // مجلد التخزين
+                ->disk('public')
+                ->directory('cash_entries')
                 ->image()
                 ->downloadable()
                 ->previewable(true)
@@ -87,15 +87,16 @@ class CashEntryResource extends Resource
             Tables\Columns\TextColumn::make('entry_type')
                 ->label('النوع')
                 ->formatStateUsing(fn (string $state) => $state === 'RECEIPT' ? 'قبض' : 'دفع')
+                ->badge()
                 ->colors([
                     'success' => fn (string $state): bool => $state === 'RECEIPT',
                     'danger'  => fn (string $state): bool => $state === 'PAYMENT',
                 ]),
 
-                            Tables\Columns\TextColumn::make('description')
+            Tables\Columns\TextColumn::make('description')
                 ->label('الوصف')
                 ->limit(40)
-                ->tooltip(fn($r) => $r->description),
+                ->tooltip(fn ($record) => $record->description),
 
             Tables\Columns\TextColumn::make('created_at')
                 ->label('التاريخ')
@@ -113,8 +114,8 @@ class CashEntryResource extends Resource
                 ])
                 ->query(function ($query, array $data) {
                     return $query
-                        ->when($data['from'] ?? null, fn($q, $d) => $q->whereDate('created_at', '>=', $d))
-                        ->when($data['to'] ?? null, fn($q, $d) => $q->whereDate('created_at', '<=', $d));
+                        ->when($data['from'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '>=', $d))
+                        ->when($data['to'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '<=', $d));
                 }),
         ])
         ->actions([
@@ -142,7 +143,7 @@ class CashEntryResource extends Resource
 
             TextEntry::make('amount')->label('المبلغ'),
             TextEntry::make('entry_type')->label('النوع')
-                ->formatStateUsing(fn(string $s) => $s === 'RECEIPT' ? 'قبض' : 'دفع'),
+                ->formatStateUsing(fn (string $state) => $state === 'RECEIPT' ? 'قبض' : 'دفع'),
             TextEntry::make('description')->label('الوصف'),
             TextEntry::make('created_at')->label('التاريخ')->dateTime('Y-m-d H:i'),
         ]);
