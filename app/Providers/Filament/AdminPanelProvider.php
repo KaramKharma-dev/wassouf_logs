@@ -29,29 +29,19 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->authGuard('web')
             ->colors(['primary' => Color::Amber])
+            ->rtl()                         // <-- إجبار اتجاه RTL
+            ->breadcrumbs(false)            // تقليل تزاحم أعلى الصفحة
+            ->sidebarCollapsibleOnDesktop() // زر طيّ القائمة
 
-            // تحسين التخطيط
-            ->maxContentWidth('full')
-            ->sidebarCollapsibleOnDesktop()
-            ->sidebarWidth('18rem')
-            ->collapsedSidebarWidth('4.5rem')
-            ->breadcrumbs(false)
-
-            // الموارد والصفحات والودجتات
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->resources([
                 \App\Filament\Resources\CashEntryResource::class,
             ])
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
-            ->pages([
-                Pages\Dashboard::class,
-            ])
+            ->pages([ Pages\Dashboard::class ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
-            ->widgets([
-                Widgets\AccountWidget::class,
-            ])
+            ->widgets([ Widgets\AccountWidget::class ])
 
-            // الوسطاء
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -63,8 +53,6 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
-            ->authMiddleware([
-                Authenticate::class,
-            ]);
+            ->authMiddleware([ Authenticate::class ]);
     }
 }
