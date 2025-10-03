@@ -17,32 +17,30 @@ use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
-use Illuminate\Support\Facades\URL;
 
 class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        URL::forceScheme('https');
-
         return $panel
-            ->default()
             ->id('admin')
             ->path('admin')
-            ->authGuard('admin')
+            ->brandName('لوحة التحكم')
             ->login()
-            ->brandName('Wassouf Store')
-            ->colors(['primary' => Color::Blue])
-            ->breadcrumbs(false)                // ← ألغِ مسار التنقّل
-            ->sidebarCollapsibleOnDesktop()
-            ->maxContentWidth('7xl')
+            ->authGuard('web')
+            ->colors(['primary' => Color::Amber])
+            ->rtl()                         // <-- إجبار اتجاه RTL
+            ->breadcrumbs(false)            // تقليل تزاحم أعلى الصفحة
+            ->sidebarCollapsibleOnDesktop() // زر طيّ القائمة
 
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
-            ->resources([\App\Filament\Resources\CashEntryResource::class])
+            ->resources([
+                \App\Filament\Resources\CashEntryResource::class,
+            ])
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
-            ->pages([Pages\Dashboard::class])
+            ->pages([ Pages\Dashboard::class ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
-            ->widgets([Widgets\AccountWidget::class])
+            ->widgets([ Widgets\AccountWidget::class ])
 
             ->middleware([
                 EncryptCookies::class,
@@ -55,6 +53,6 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
-            ->authMiddleware([Authenticate::class]);
+            ->authMiddleware([ Authenticate::class ]);
     }
 }
