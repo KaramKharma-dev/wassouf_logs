@@ -29,22 +29,29 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->authGuard('web')
             ->colors(['primary' => Color::Amber])
+
+            // تحسين التخطيط
+            ->maxContentWidth('full')
             ->sidebarCollapsibleOnDesktop()
+            ->sidebarWidth('18rem')
+            ->collapsedSidebarWidth('4.5rem')
+            ->breadcrumbs(false)
 
-
-            // اكتشف الريسورس من المسار غير الإداري
+            // الموارد والصفحات والودجتات
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
-            // سجّل الريسورس صراحةً لتتأكد أثناء البناء
             ->resources([
                 \App\Filament\Resources\CashEntryResource::class,
             ])
-
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
-            ->pages([ Pages\Dashboard::class ])
-
+            ->pages([
+                Pages\Dashboard::class,
+            ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
-            ->widgets([ Widgets\AccountWidget::class ])
+            ->widgets([
+                Widgets\AccountWidget::class,
+            ])
 
+            // الوسطاء
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -56,6 +63,8 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
-            ->authMiddleware([ Authenticate::class ]);
+            ->authMiddleware([
+                Authenticate::class,
+            ]);
     }
 }
