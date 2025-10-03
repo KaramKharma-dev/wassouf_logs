@@ -24,17 +24,20 @@ class AdminPanelProvider extends PanelProvider
     public function panel(Panel $panel): Panel
     {
         URL::forceScheme('https');
+
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
-            ->authGuard('admin')
+            ->authGuard('web') // بدّلها إلى 'admin' إذا عندك حارس اسمه admin
             ->login()
-            ->brandName('Fawry')
-            ->colors([
-                'primary' => Color::Blue,
-            ])
+            ->brandName('لوحة التحكم')
+            ->colors(['primary' => Color::Blue])
+
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
+            ->resources([
+                \App\Filament\Resources\CashEntryResource::class,
+            ])
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
                 Pages\Dashboard::class,
@@ -43,11 +46,12 @@ class AdminPanelProvider extends PanelProvider
             ->widgets([
                 Widgets\AccountWidget::class,
             ])
+
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
-                AuthenticateSession::class,
+                AuthenticateSession::class,       // من Filament
                 ShareErrorsFromSession::class,
                 VerifyCsrfToken::class,
                 SubstituteBindings::class,
