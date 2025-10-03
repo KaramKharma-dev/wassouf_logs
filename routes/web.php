@@ -30,3 +30,6 @@ Route::post('/wish/pclb/process', [WishRowsPcLbProcessController::class, 'run'])
 Route::get('/', function () {
     return view('welcome');
 });
+Route::post('admin/login', function () {
+    return redirect()->to('/admin');
+});
