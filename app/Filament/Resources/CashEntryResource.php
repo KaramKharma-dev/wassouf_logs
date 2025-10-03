@@ -86,14 +86,13 @@ class CashEntryResource extends Resource
 
             Tables\Columns\TextColumn::make('entry_type')
                 ->label('النوع')
-                ->formatStateUsing(fn(string $s) => $s === 'RECEIPT' ? 'قبض' : 'دفع')
-                ->badge()
+                ->formatStateUsing(fn (string $state) => $state === 'RECEIPT' ? 'قبض' : 'دفع')
                 ->colors([
-                    'success' => fn($s) => $s === 'RECEIPT',
-                    'danger'  => fn($s) => $s === 'PAYMENT',
+                    'success' => fn (string $state): bool => $state === 'RECEIPT',
+                    'danger'  => fn (string $state): bool => $state === 'PAYMENT',
                 ]),
 
-            Tables\Columns\TextColumn::make('description')
+                            Tables\Columns\TextColumn::make('description')
                 ->label('الوصف')
                 ->limit(40)
                 ->tooltip(fn($r) => $r->description),
