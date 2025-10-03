@@ -14,7 +14,7 @@ use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
-use Illuminate\Session\Middleware\AuthenticateSession; // الصحيح
+use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Illuminate\Support\Facades\URL;
@@ -26,21 +26,24 @@ class AdminPanelProvider extends PanelProvider
         URL::forceScheme('https');
 
         return $panel
+            ->default()
             ->id('admin')
             ->path('admin')
-            ->brandName('Fawry')
-            ->login()
             ->authGuard('web')
+            ->login()
+            ->brandName('Fawry')
             ->colors(['primary' => Color::Blue])
-            ->breadcrumbs(false)              // إلغاء التتبّع
-            ->sidebarCollapsibleOnDesktop()   // زر طي القائمة
-            ->maxContentWidth('7xl')          // عرض مريح للترويسة
+            ->breadcrumbs(false)                // ← ألغِ مسار التنقّل
+            ->sidebarCollapsibleOnDesktop()
+            ->maxContentWidth('7xl')
+
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->resources([\App\Filament\Resources\CashEntryResource::class])
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([Pages\Dashboard::class])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([Widgets\AccountWidget::class])
+
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -53,6 +56,5 @@ class AdminPanelProvider extends PanelProvider
                 DispatchServingFilamentEvent::class,
             ])
             ->authMiddleware([Authenticate::class]);
-
-            }
+    }
 }

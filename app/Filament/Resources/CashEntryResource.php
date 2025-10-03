@@ -18,6 +18,11 @@ class CashEntryResource extends Resource
     protected static ?string $pluralLabel = 'قيود القبض والدفع';
     protected static ?string $modelLabel = 'قيد نقدي';
 
+    public static function canCreate(): bool
+    {
+        return false; // ← يمنع زر "إنشاء"
+    }
+
     public static function form(Form $form): Form
     {
         return $form->schema([]);
