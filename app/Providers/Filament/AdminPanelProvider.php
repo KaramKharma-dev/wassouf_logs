@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use Filament\Http\Middleware\Authenticate;
+use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Pages;
@@ -14,34 +15,34 @@ use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
-use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+use Illuminate\Support\Facades\URL;
 
 class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        URL::forceScheme('https');
         return $panel
+            ->default()
             ->id('admin')
             ->path('admin')
-            ->brandName('لوحة التحكم')
+            ->authGuard('admin')
             ->login()
-            ->authGuard('web')
-            ->colors(['primary' => Color::Amber])
-            ->breadcrumbs(false)
-            ->sidebarCollapsibleOnDesktop()
-            ->maxContentWidth('full')
-
-            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
-            ->resources([
-                \App\Filament\Resources\CashEntryResource::class,
+            ->brandName('Fawry')
+            ->colors([
+                'primary' => Color::Blue,
             ])
+            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
-            ->pages([ Pages\Dashboard::class ])
+            ->pages([
+                Pages\Dashboard::class,
+            ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
-            ->widgets([ Widgets\AccountWidget::class ])
-
+            ->widgets([
+                Widgets\AccountWidget::class,
+            ])
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -52,8 +53,9 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
-                \App\Http\Middleware\SetFilamentLocale::class, // يضبط ar => RTL
             ])
-            ->authMiddleware([ Authenticate::class ]);
+            ->authMiddleware([
+                Authenticate::class,
+            ]);
     }
 }
