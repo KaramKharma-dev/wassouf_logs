@@ -29,9 +29,9 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->authGuard('web')
+            ->authGuard('admin')
             ->login()
-            ->brandName('Fawry')
+            ->brandName('Wassouf Store')
             ->colors(['primary' => Color::Blue])
             ->breadcrumbs(false)                // ← ألغِ مسار التنقّل
             ->sidebarCollapsibleOnDesktop()
