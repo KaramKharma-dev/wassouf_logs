@@ -29,7 +29,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->authGuard('admin')
+            ->authGuard('web')
             ->login()
             ->brandName('Fawry')
             ->colors(['primary' => Color::Blue])
