@@ -29,6 +29,8 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->authGuard('web')
             ->colors(['primary' => Color::Amber])
+            ->sidebarCollapsibleOnDesktop()
+
 
             // اكتشف الريسورس من المسار غير الإداري
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
