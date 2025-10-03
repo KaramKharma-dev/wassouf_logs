@@ -23,35 +23,23 @@ class AdminPanelProvider extends PanelProvider
     public function panel(Panel $panel): Panel
     {
         return $panel
+            ->default()
             ->id('admin')
             ->path('admin')
-            ->brandName('لوحة التحكم')
             ->login()
-            ->authGuard('web')
-            ->colors(['primary' => Color::Amber])
-
-            // تحسين التخطيط
-            ->maxContentWidth('full')
-            ->sidebarCollapsibleOnDesktop()
-            ->sidebarWidth('18rem')
-            ->collapsedSidebarWidth('4.5rem')
-            ->breadcrumbs(false)
-
-            // الموارد والصفحات والودجتات
-            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
-            ->resources([
-                \App\Filament\Resources\CashEntryResource::class,
+            ->colors([
+                'primary' => Color::Amber,
             ])
+            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
                 Pages\Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([
-                //Widgets\AccountWidget::class,
+                Widgets\AccountWidget::class,
+                Widgets\FilamentInfoWidget::class,
             ])
-
-            // الوسطاء
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
