@@ -15,5 +15,6 @@ class ListCashEntries extends ListRecords
         return [
             Actions\CreateAction::make()->label('إضافة حركة'),
         ];
+        
     }
 }
