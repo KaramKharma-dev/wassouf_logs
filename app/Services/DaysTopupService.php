@@ -34,7 +34,7 @@ class DaysTopupService
                 'received_at'     => $ts,
             ]);
 
-            // CHANGED: سطر اليوم يُناقش حسب sender_number بدلاً من receiver_number
+            // CHANGED: سطر اليوم يناقش حسب sender_number بدلاً من receiver_number
             $row = DaysTransfer::lockForUpdate()
                 ->where('sender_number', $msisdn)
                 ->where('provider', $provider)
@@ -104,13 +104,15 @@ class DaysTopupService
             $amount = (float)$m[1];
         }
 
-        // msisdn: بعد "mobile number" أو أي +961########
         $msisdn = null;
-        if (preg_match('/mobile\s+number\s+(?:\+?961)?\s?(\d{8})/i', $msg, $m2)) {
+        if (preg_match('/(?:\+?961)\s?(\d{7})/i', $msg, $m1)) {
+            $msisdn = $this->normalizeMsisdn($m1[0]);
+        } elseif (preg_match('/mobile\s+number\s+(?:\+?961\s*)?(\d{7,8})/i', $msg, $m2)) {
             $msisdn = $this->normalizeMsisdn($m2[1]);
-        } elseif (preg_match('/(?:\+?961)(\d{8})/', $msg, $m3)) {
-            $msisdn = $this->normalizeMsisdn($m3[0]);
+        } elseif (preg_match('/\b(\d{7,8})\b/', $msg, $m3)) {
+            $msisdn = $this->normalizeMsisdn($m3[1]);
         }
+
 
         if ($msisdn === null || $amount === null) {
             throw ValidationException::withMessages(['msg'=>'غير قادر على استخراج الرقم أو المبلغ من الرسالة']);
@@ -121,13 +123,24 @@ class DaysTopupService
     private function normalizeMsisdn(string $raw): string
     {
         $digits = preg_replace('/\D+/', '', $raw);
-        if (str_starts_with($digits, '961') && strlen($digits) >= 11) return substr($digits, -8);
-        if (strlen($digits) >= 8) return substr($digits, -8);
+
+        if (str_starts_with($digits, '961')) {
+            $local = substr($digits, 3);
+            $local = ltrim($local, '0');
+            if (strlen($local) >= 7) {
+                return substr($local, -7);
+            }
+            return $local;
+        }
+
+        $len = strlen($digits);
+        if ($len >= 7 && $len <= 8) return $digits;
+        if ($len > 8) return substr($digits, -8);
+
         return $digits;
     }
 
-    // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
-    // طريقة داخلية موحدة: إقفال بالـ id ضمن ترانزاكشن قصيرة
+
 private function finalizeRowById(int $id): DaysTransfer
 {
     return DB::transaction(function () use ($id) {
