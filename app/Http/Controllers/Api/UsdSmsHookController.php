@@ -168,34 +168,49 @@ class UsdSmsHookController extends Controller
 
     private function parse(string $provider, string $body): array
     {
+        // المبلغ
+        $amount = null;
         if ($provider === 'alfa') {
-            if (preg_match('/USD\s+(\d+(?:\.\d+)?)\b/i', $body, $m1) &&
-                preg_match('/mobile\s+number\s+(\+?961\d{8})/i', $body, $m2)) {
-                return [$m1[1], $m2[1]];
+            if (preg_match('/USD\s+(\d+(?:\.\d+)?)\b/i', $body, $m1)) {
+                $amount = $m1[1];
+            }
+        } elseif ($provider === 'mtc') {
+            if (preg_match('/\$(\d+(?:\.\d+)?)\b/i', $body, $m1)) {
+                $amount = $m1[1];
             }
         }
 
-        if ($provider === 'mtc') {
-            if (preg_match('/\$(\d+(?:\.\d+)?)\b/i', $body, $m1) &&
-                preg_match('/mobile\s+number\s+(\+?(?:961)?\d{8})/i', $body, $m2)) {
-                return [$m1[1], $m2[1]];
-            }
+        // الرقم: 7 أو 8 محلي، أو 961 + 7 — لكلا المزودين
+        $msisdn = null;
+        if (preg_match('/mobile\s+number\s+(\+?961\d{7}|\d{7,8})\b/i', $body, $m2)) {
+            $msisdn = $m2[1];
         }
 
-        return [null, null];
+        return [$amount, $msisdn];
     }
 
     private function normalizeMsisdn(string $n): string
     {
         $n = preg_replace('/\D+/', '', $n);
+
+        // إزالة 00961 أو 961 إن وُجدت
         if (str_starts_with($n, '00961')) {
             $n = substr($n, 5);
         } elseif (str_starts_with($n, '961')) {
             $n = substr($n, 3);
         }
+
+        // إذا محلي 7 خانات ويبدأ بـ 3 ⇒ أضف 0 ليصبح 03xxxxxx
+        if (strlen($n) === 7 && $n[0] === '3') {
+            $n = '0' . $n;
+        }
+
+        // قص للطول الأقصى 8 خانات عند اللزوم
         if (strlen($n) > 8) {
             $n = substr($n, -8);
         }
+
         return $n;
     }
+
 }
