@@ -34,7 +34,7 @@ class DaysTopupService
                 'received_at'     => $ts,
             ]);
 
-            // CHANGED: سطر اليوم يناقش حسب sender_number بدلاً من receiver_number
+            // سطر اليوم يناقش حسب sender_number
             $row = DaysTransfer::lockForUpdate()
                 ->where('sender_number', $msisdn)
                 ->where('provider', $provider)
@@ -90,40 +90,40 @@ class DaysTopupService
             throw ValidationException::withMessages(['amount'=>'قيمة غير مسموحة']);
         }
 
-        // يبقى الـ API على حاله: نفس البراميترات
+        // يبقى الـ API على حاله
         return $this->addMsgByDate($msisdn, $receiver, $provider, (float)$amount, $ts);
     }
 
     private function parseSms(string $provider, string $msg): array
     {
-        // amount: "USD 3.0" أو "$3.0"
+        // amount: "$3.0" أو "USD 3.0" أو "3.0 USD"
         $amount = null;
-        if (preg_match('/(?:USD|\$)\s*([0-9]+(?:\.[0-9]+)?)/i', $msg, $m)) {
-            $amount = (float)$m[1];
-        } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*(?:USD|\$)/i', $msg, $m)) {
-            $amount = (float)$m[1];
+        if (preg_match('/\$\s*([0-9]+(?:\.[0-9]+)?)/', $msg, $ma)) {
+            $amount = (float)$ma[1];
+        } elseif (preg_match('/(?:USD)\s*([0-9]+(?:\.[0-9]+)?)/i', $msg, $mb)) {
+            $amount = (float)$mb[1];
+        } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*USD/i', $msg, $mc)) {
+            $amount = (float)$mc[1];
         }
 
-        // msisdn: يدعم 7 محلياً، 8 محلياً، أو 961 + 7
+        // msisdn: 7 محلي فقط، أو 961 + 7
         $msisdn = null;
 
-        if (preg_match('/mobile\s+number\s+(\d{7})(?!\d)/i', $msg, $m0)) {
+        // 1) "from the mobile number 3170935"
+        if (preg_match('/from\s+the\s+mobile\s+number\s+(\d{7})(?!\d)/i', $msg, $m0)) {
             $msisdn = $this->normalizeMsisdn($m0[1]);
 
-        } elseif (preg_match('/(?:\+?961)\s?(\d{7})(?!\d)/i', $msg, $m1)) {
-            $msisdn = $this->normalizeMsisdn($m1[0]);
+        // 2) "mobile number 3170935"
+        } elseif (preg_match('/mobile\s+number\s+(\d{7})(?!\d)/i', $msg, $m1)) {
+            $msisdn = $this->normalizeMsisdn($m1[1]);
 
-        } elseif (preg_match('/mobile\s+number\s+(?:\+?961\s*)?(\d{7,8})/i', $msg, $m2)) {
-            $msisdn = $this->normalizeMsisdn($m2[1]);
-
-        } elseif (preg_match('/\b(\d{7,8})\b/', $msg, $m3)) {
-            $msisdn = $this->normalizeMsisdn($m3[1]);
+        // 3) 961 ثم 7 أرقام
+        } elseif (preg_match('/(?:\+?961)\s?(\d{7})(?!\d)/i', $msg, $m2)) {
+            $msisdn = $this->normalizeMsisdn($m2[0]);
         }
 
-
-
         if ($msisdn === null || $amount === null) {
-            throw ValidationException::withMessages(['msg'=>'غير قادر على استخراج الرقم أو المبلغ من الرسالة']);
+            throw ValidationException::withMessages(['msg'=>'parse_failed']);
         }
         return [$msisdn, $amount];
     }
@@ -134,84 +134,82 @@ class DaysTopupService
 
         // مع 961: أرجع 7 أرقام بعد الرمز
         if (str_starts_with($digits, '961')) {
-            $local = substr($digits, 3);
-            $local = ltrim($local, '0');
+            $local = ltrim(substr($digits, 3), '0');
             return strlen($local) >= 7 ? substr($local, -7) : $local;
         }
 
-        // محلي: 7 أو 8 مسموح. إن كانت أطول خذ آخر 8.
-        $len = strlen($digits);
-        if ($len === 7 || $len === 8) return $digits;
-        if ($len > 8) return substr($digits, -8);
+        // محلي: 7 فقط. إن أطول نأخذ آخر 7 للاحتياط.
+        if (strlen($digits) >= 7) {
+            return substr($digits, -7);
+        }
+
         return $digits;
     }
 
+    // تسوية يدوية لنهاية اليوم: تحديث الأرصدة فقط (بدون خصم Wish)
+    private function finalizeRowById(int $id): DaysTransfer
+    {
+        return DB::transaction(function () use ($id) {
+            $row = DaysTransfer::whereKey($id)->lockForUpdate()->firstOrFail();
 
-private function finalizeRowById(int $id): DaysTransfer
-{
-    return DB::transaction(function () use ($id) {
-        $row = DaysTransfer::whereKey($id)->lockForUpdate()->firstOrFail();
+            if ($row->status !== 'OPEN') {
+                return $row;
+            }
 
-        // تجاهل غير المفتوح
-        if ($row->status !== 'OPEN') {
+            Balance::adjust($row->provider, +(float)$row->sum_incoming_usd);
+            Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
+
+            $row->status = 'PENDING_RECON';
+            $row->save();
             return $row;
-        }
-
-        Balance::adjust($row->provider, +(float)$row->sum_incoming_usd);
-        Balance::adjust('my_balance', +$this->priceOf((int)$row->months_count));
-
-        $row->status = 'PENDING_RECON';
-        $row->save();
-        return $row;
-    });
-}
-
-// إقفال بالـ sender_number للتوافق، ثم تفويض للـ id
-public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
-{
-    $row = DaysTransfer::where('sender_number', $msisdn)
-        ->where('provider', $provider)
-        ->where('op_date', $opDate)
-        ->firstOrFail();
-
-    return $this->finalizeRowById($row->id);
-}
-
-// إقفال بالـ receiver_number للتوافق، ثم تفويض للـ id
-public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
-{
-    $row = DaysTransfer::where('receiver_number', $receiver)
-        ->where('provider', $provider)
-        ->where('op_date', $opDate)
-        ->firstOrFail();
-
-    return $this->finalizeRowById($row->id);
-}
-
-// إقفال كل الصفوف المفتوحة لليوم: بالـ id + ترانزاكشن لكل صف
-public function finalizeAllForDate(string $provider, string $opDate): int
-{
-    // اجلب IDs فقط لتقليل الحمل على القفل والذاكرة
-    $ids = DaysTransfer::where('provider', $provider)
-        ->where('op_date', $opDate)
-        ->where('status', 'OPEN')
-        ->pluck('id');
-
-    $n = 0;
-    foreach ($ids as $id) {
-        $this->finalizeRowById((int)$id);
-        $n++;
+        });
     }
-    return $n;
-}
 
+    // إقفال بالـ sender_number
+    public function finalizeDay(string $msisdn, string $provider, string $opDate): DaysTransfer
+    {
+        $row = DaysTransfer::where('sender_number', $msisdn)
+            ->where('provider', $provider)
+            ->where('op_date', $opDate)
+            ->firstOrFail();
+
+        return $this->finalizeRowById($row->id);
+    }
+
+    // إقفال بالـ receiver_number
+    public function finalizeDayCorrect(string $receiver, string $provider, string $opDate): DaysTransfer
+    {
+        $row = DaysTransfer::where('receiver_number', $receiver)
+            ->where('provider', $provider)
+            ->where('op_date', $opDate)
+            ->firstOrFail();
+
+        return $this->finalizeRowById($row->id);
+    }
+
+    // إقفال كل الصفوف المفتوحة لليوم
+    public function finalizeAllForDate(string $provider, string $opDate): int
+    {
+        $ids = DaysTransfer::where('provider', $provider)
+            ->where('op_date', $opDate)
+            ->where('status', 'OPEN')
+            ->pluck('id');
+
+        $n = 0;
+        foreach ($ids as $id) {
+            $this->finalizeRowById((int)$id);
+            $n++;
+        }
+        return $n;
+    }
 
     private function priceOf(int $months): float
     {
         $pricing = Config::get('days_topup.pricing',[]);
         return (float)($pricing[$months] ?? 0);
     }
-    // قرار اليوم: أولوية للمبالغ المطابقة تمامًا، وإلا تصنيف عام
+
+    // قرار اليوم
     private function decideForToday(string $provider, float $sum): array
     {
         $s = round($sum, 2);
@@ -237,7 +235,7 @@ public function finalizeAllForDate(string $provider, string $opDate): int
         // 12 شهر
         if ($s > 35.50 && $s <= 73.00)               return [12, [77.28], 'RANGE_12M_>35.5_<=73', 73.00];
 
-        // فُل باك بدون كروت + سقف الرينج الأقرب
+        // فُل باك
         if     ($s >= 3.00  && $s <= 6.00)           return [1,  [], 'FALLBACK_1M', 6.00];
         elseif ($s > 6.00   && $s < 21.00)           return [3,  [], 'FALLBACK_3M', 21.00];
         elseif ($s > 21.00  && $s < 35.50)           return [6,  [], 'FALLBACK_6M', 35.50];
