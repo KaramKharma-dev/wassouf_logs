@@ -104,14 +104,22 @@ class DaysTopupService
             $amount = (float)$m[1];
         }
 
+        // msisdn: يدعم 7 محلياً، 8 محلياً، أو 961 + 7
         $msisdn = null;
-        if (preg_match('/(?:\+?961)\s?(\d{7})/i', $msg, $m1)) {
+
+        if (preg_match('/mobile\s+number\s+(\d{7})(?!\d)/i', $msg, $m0)) {
+            $msisdn = $this->normalizeMsisdn($m0[1]);
+
+        } elseif (preg_match('/(?:\+?961)\s?(\d{7})(?!\d)/i', $msg, $m1)) {
             $msisdn = $this->normalizeMsisdn($m1[0]);
+
         } elseif (preg_match('/mobile\s+number\s+(?:\+?961\s*)?(\d{7,8})/i', $msg, $m2)) {
             $msisdn = $this->normalizeMsisdn($m2[1]);
+
         } elseif (preg_match('/\b(\d{7,8})\b/', $msg, $m3)) {
             $msisdn = $this->normalizeMsisdn($m3[1]);
         }
+
 
 
         if ($msisdn === null || $amount === null) {
@@ -124,19 +132,17 @@ class DaysTopupService
     {
         $digits = preg_replace('/\D+/', '', $raw);
 
+        // مع 961: أرجع 7 أرقام بعد الرمز
         if (str_starts_with($digits, '961')) {
             $local = substr($digits, 3);
             $local = ltrim($local, '0');
-            if (strlen($local) >= 7) {
-                return substr($local, -7);
-            }
-            return $local;
+            return strlen($local) >= 7 ? substr($local, -7) : $local;
         }
 
+        // محلي: 7 أو 8 مسموح. إن كانت أطول خذ آخر 8.
         $len = strlen($digits);
-        if ($len >= 7 && $len <= 8) return $digits;
+        if ($len === 7 || $len === 8) return $digits;
         if ($len > 8) return substr($digits, -8);
-
         return $digits;
     }
 
