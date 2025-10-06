@@ -7,6 +7,17 @@ use App\Http\Controllers\WishRawAltProcessController;
 use App\Http\Controllers\WishRowsPcProcessController;
 use App\Http\Controllers\WishRowsPcLbProcessController;
 
+Route::get('/link-storage', function () {
+    Artisan::call('storage:link');
+    return 'تم ربط مجلد التخزين بنجاح ✔️';
+});
+
+
+Route::get('/run-migration', function () {
+    Artisan::call('migrate', ['--force' => true]);
+    return 'تم تنفيذ الـ migration بنجاح ✅';
+});
+
 //WISH USD
 Route::get('/wish/process', [WishRowsProcessController::class, 'index'])->name('wish.process.index');
 Route::post('/wish/process', [WishRowsProcessController::class, 'run'])->name('wish.process.run');
